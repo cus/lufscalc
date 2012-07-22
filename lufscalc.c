@@ -26,12 +26,15 @@
  */
 
 #include <unistd.h>
-#include "libavutil/imgutils.h"
-#include "libavutil/opt.h"
+#include <stddef.h>
+#include <math.h>
 #include "libavcodec/avcodec.h"
+#include "libavutil/imgutils.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/samplefmt.h"
 #include "libavutil/error.h"
+#include "libavutil/opt.h"
+#include "libavutil/log.h"
 #include "libavformat/avformat.h"
 #include "libswresample/swresample.h"
 
@@ -82,6 +85,7 @@ typedef struct CalcContext {
 } CalcContext;
 
 typedef struct LufscalcConfig {
+    const AVClass *class;
     int silent;
     int resilient;
     double tplimit;
@@ -89,9 +93,25 @@ typedef struct LufscalcConfig {
     int verbose_peak;
 } LufscalcConfig;
 
+static const AVOption lufscalc_config_options[] = {
+  { "tracks",    "track specification (2222 means four stereo tracks)",             offsetof(LufscalcConfig, track_spec), AV_OPT_TYPE_STRING },
+  { "silent",    "only output the measured loudness and peak seperated by a space", offsetof(LufscalcConfig, silent),     AV_OPT_TYPE_INT,    { 0 }, 0, 1 },
+  { "s",         "same as -silent",                                                 offsetof(LufscalcConfig, silent),     AV_OPT_TYPE_INT,    { 0 }, 0, 1 },
+  { "resilient", "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),  AV_OPT_TYPE_INT,    { 0 }, 0, 1 },
+  { "r",         "same as -resilient",                                              offsetof(LufscalcConfig, resilient),  AV_OPT_TYPE_INT,    { 0 }, 0, 1 },
+  { "tplimit",   "use true peak processing above this sample peak",                 offsetof(LufscalcConfig, tplimit),    AV_OPT_TYPE_DOUBLE, { 0 }, -INFINITY, INFINITY },
+  { NULL },
+};
+
+static const AVClass lufscalc_config_class = {
+    .class_name = "lufscalc",
+    .item_name  = av_default_item_name,
+    .option     = lufscalc_config_options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
+
 static void panic(const char *str) {
-    fprintf(stderr, "%s\n", str);
-    fflush(stderr);
+    av_log(NULL, AV_LOG_PANIC, "%s\n", str);
     exit(1);
 }
 
@@ -263,7 +283,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     memset(&calc, 0, sizeof(calc));
     for (i = 0; i < BS1770_CTX_CNT; i++) {
         calc.bs1770_ctx[i] = bs1770_ctx_open(MODE,GATE,BLOCK,PARTITION,REFERENCE);
-        calc.peak[i].tplimit = conf->tplimit;
+        calc.peak[i].tplimit = pow(10, -fabs(conf->tplimit) / 20.0);
         calc.peak[i].peak = 0.0;
         if (!calc.bs1770_ctx[i])
             panic("failed to initialize bs1770 context\n");
@@ -271,7 +291,11 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     if (!(decoded_frame = avcodec_alloc_frame()))
         panic("out of memory allocating the frame\n");
 
-    fprintf(stderr, "Staring audio decoding of %s ...\n", filename);
+    if (fabs(conf->tplimit) != 0)
+        av_log(conf, AV_LOG_INFO, "Calculating true peak above %.1f dBFS (%.2f) sample peak.\n", -fabs(conf->tplimit), pow(10, -fabs(conf->tplimit) / 20.0));
+    else
+        av_log(conf, AV_LOG_INFO, "Calculating sample peak.\n");
+    av_log(conf, AV_LOG_INFO, "Staring audio decoding of %s ...\n", filename);
     
     ic = avformat_alloc_context();
 
@@ -317,7 +341,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         int stream_index = audio_streams[i];
         c[i] = ic->streams[stream_index]->codec;
         avcodec_string(codecname, sizeof(codecname), c[i], 0);
-        fprintf(stderr, "Stream %d: %s\n", stream_index, codecname);
+        av_log(conf, AV_LOG_INFO, "Stream %d: %s\n", stream_index, codecname);
         if (avcodec_open2(c[i], codec[i], NULL) < 0)
             panic("could not open codec");
     }
@@ -365,7 +389,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         
                     len = avcodec_decode_audio4(c[i], decoded_frame, &got_frame, &avpkt);
                     if (len < 0) {
-                        fprintf(stderr, "Error while decoding\n"); 
+                        av_log(conf, AV_LOG_ERROR, "Error while decoding.\n");
                         if (!conf->resilient)
                             ret = len;
                         break;
@@ -409,16 +433,16 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
         for (i=0; i<nb_audio_streams; i++)
             if (out[i].buffer_pos)
-                fprintf(stderr, "Buffer #%d is not empty after eof.\n", i);
+                av_log(conf, AV_LOG_INFO, "Buffer #%d is not empty after eof.\n", i);
     
-        fprintf(stderr, "Decoding finished.\n");
+        av_log(conf, AV_LOG_INFO, "Decoding finished.\n");
         for (i=0; i<calc.nb_context; i++)
             print_results(calc.nb_channels[i], i, filename, bs1770_ctx_track_lufs(calc.bs1770_ctx[i], SAMPLE_RATE, calc.nb_channels[i]), 20*log10(FFMAX(0.00001, calc.peak[i].peak)), conf->silent);
 
     } else {
         char errbuf[256] = "Unknown error";
         av_strerror(ret, errbuf, sizeof(errbuf));
-        fprintf(stderr, "Decoding failed. %s.\n", errbuf);
+        av_log(conf, AV_LOG_ERROR, "Decoding failed. %s.\n", errbuf);
     }
 
     for (i=0; i<nb_audio_streams; i++)
@@ -454,45 +478,53 @@ int main(int argc, char **argv)
     avformat_network_init();
 
     memset(&conf, 0, sizeof(conf));
-    conf.tplimit = 999.0;
+    conf.class = &lufscalc_config_class;
+    av_opt_set_defaults(&conf);
 
     while (!ret) {
         argv++;
         argc--;
         if (!argc) {
             if (!filecount) {
-                fprintf(stderr, "No input file!\n");
+                av_log(&conf, AV_LOG_FATAL, "No input file!\n");
                 ret = 1;
             }
             break;
         }
         if (!filecount) {
-            if (!strcmp(argv[0], "-s")) {
-                conf.silent = 1;
-                continue;
-            }
-            if (!strcmp(argv[0], "-r")) {
-                conf.resilient = 1;
-                continue;
-            }
-            if (!strcmp(argv[0], "-tp")) {
-                conf.tplimit = 0.0;
-                continue;
-            }
-            if (!strcmp(argv[0], "-tplimit")) {
-                if (argc > 1) {
-                  conf.tplimit = pow(10, -fabs(strtod(argv[1], NULL)) / 20.0);
-                  fprintf(stderr, "Calculating true peak above %.1f dBFS sample peak.\n", 20 * log10(conf.tplimit));
-                  argv++;
-                  argc--;
-                } else {
-                  fprintf(stderr, "Invalid tplimit!\n");
-                  ret = 1;
-                }
-                continue;
-            }
             if (argv[0][0] == '-') {
-                conf.track_spec = argv[0]+1;
+                const AVOption *option = av_opt_find2(&conf, (const char*)(argv[0]+1), NULL, 0, 0, NULL);
+                char *value;
+                if (!option) {
+                    if (!strcmp(argv[0], "-h")) {
+                        fprintf(stderr, "Lufscalc, built at %s %s\nCommand line parameters:\n", __DATE__, __TIME__);
+                        for (option = lufscalc_config_options; option->name; option++)
+                            fprintf(stderr, " -%-9s %3s %s\n", option->name, (option->type == AV_OPT_TYPE_INT && option->min == 0 && option->max == 1) ? "": (option->type == AV_OPT_TYPE_STRING) ? "<s>" : "<d>", option->help);
+                        break;
+                    }
+                    if (!strcmp(argv[0], "-tp")) {
+                        conf.tplimit = INFINITY;
+                        continue;
+                    }
+                    option = lufscalc_config_options;
+                    value = argv[0]+1;
+                } else if (option->type == AV_OPT_TYPE_INT && option->min == 0 && option->max == 1) {
+                    value = "1";
+                } else {
+                    if (argc > 1) {
+                        value = argv[1];
+                        argv++;
+                        argc--;
+                    } else {
+                        av_log(&conf, AV_LOG_FATAL, "Missing parameter to option %s!\n", option->name);
+                        ret = 1;
+                        break;
+                    }
+                }
+                if (av_opt_set(&conf, option->name, (const char*)value, 0) < 0) {
+                    ret = 1;
+                    break;
+                }
                 continue;
             }
         }
@@ -501,6 +533,7 @@ int main(int argc, char **argv)
     }
     
     avformat_network_deinit();
+    av_opt_free(&conf);
 
     return ret;
 }
