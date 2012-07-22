@@ -1,0 +1,21 @@
+diff --git a/Makefile b/Makefile
+index 30d8750..605e132 100644
+--- a/Makefile
++++ b/Makefile
+@@ -12,6 +12,7 @@ vpath %/fate_config.sh.template $(SRC_PATH)
+ 
+ PROGS-$(CONFIG_FFMPEG)   += ffmpeg
+ PROGS-$(CONFIG_FFPLAY)   += ffplay
++PROGS-$(CONFIG_FFPLAY)   += lufscalc
+ PROGS-$(CONFIG_FFPROBE)  += ffprobe
+ PROGS-$(CONFIG_FFSERVER) += ffserver
+ 
+@@ -23,7 +24,7 @@ HOSTPROGS  := $(TESTTOOLS:%=tests/%) doc/print_options
+ TOOLS       = qt-faststart trasher
+ TOOLS-$(CONFIG_ZLIB) += cws2fws
+ 
+-BASENAMES   = ffmpeg ffplay ffprobe ffserver
++BASENAMES   = ffmpeg ffplay ffprobe ffserver lufscalc
+ ALLPROGS    = $(BASENAMES:%=%$(PROGSSUF)$(EXESUF))
+ ALLPROGS_G  = $(BASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
+ ALLMANPAGES = $(BASENAMES:%=%.1)
