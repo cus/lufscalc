@@ -216,7 +216,7 @@ static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, struct Out
     for (i=0; i<c_channels; i++)
         buffers2[i] = out->buffers[i] + out->buffer_pos;
     nb_samples = swr_convert(out->swr_ctx, (uint8_t**)buffers2, BUFSIZE / av_get_bytes_per_sample(tgt_sample_fmt) - out->buffer_pos,
-                                    (const uint8_t**)decoded_frame->data, decoded_frame->nb_samples);
+                                    (const uint8_t**)decoded_frame->extended_data, decoded_frame->nb_samples);
     
     if (nb_samples < 0)
         panic("audio_resample() failed");
