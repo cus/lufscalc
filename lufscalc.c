@@ -55,7 +55,7 @@
 #define unlikely(x)     (x)
 #endif
 
-struct OutputContext {
+typedef struct OutputContext {
     int initialized;
     struct SwrContext *swr_ctx;
     enum AVSampleFormat src_sample_fmt;
@@ -65,7 +65,7 @@ struct OutputContext {
     int buffer_pos;
 } OutputContext;
     
-struct TruePeakContext {
+typedef struct TruePeakContext {
     int initialized;
     struct SwrContext *swr_ctx[SWR_CH_MAX];
     int swr_ctx_initialized[SWR_CH_MAX];
@@ -74,14 +74,14 @@ struct TruePeakContext {
     double tplimit;
 } TruePeakContext;
 
-struct CalcContext {
+typedef struct CalcContext {
     bs1770_ctx_t *bs1770_ctx[BS1770_CTX_CNT];
     int nb_channels[BS1770_CTX_CNT];
     struct TruePeakContext peak[BS1770_CTX_CNT];
     int nb_context;
 } CalcContext;
 
-struct LufscalcConfig {
+typedef struct LufscalcConfig {
     int silent;
     int resilient;
     double tplimit;
@@ -95,7 +95,7 @@ static void panic(const char *str) {
     exit(1);
 }
 
-static void calc_lufs(double* dblbuf[SWR_CH_MAX], int nb_samples, const int tgt_sample_rate, struct CalcContext *calc) {
+static void calc_lufs(double* dblbuf[SWR_CH_MAX], int nb_samples, const int tgt_sample_rate, CalcContext *calc) {
     int i, j, k = 0;
     double *dblbuf2[SWR_CH_MAX];
     for (i=0; i<calc->nb_context; i++) {
@@ -119,7 +119,7 @@ static double peak_max(double *buf, int nb_samples, double peak) {
     return peak;
 }
 
-static void calc_peak_context(double* dblbuf[SWR_CH_MAX], int nb_channels, int nb_samples, const int tgt_sample_rate, struct TruePeakContext *truepeak) {
+static void calc_peak_context(double* dblbuf[SWR_CH_MAX], int nb_channels, int nb_samples, const int tgt_sample_rate, TruePeakContext *truepeak) {
     int i;
     int nb_resampled_samples;
     double peak;
@@ -164,7 +164,7 @@ static void calc_peak_context(double* dblbuf[SWR_CH_MAX], int nb_channels, int n
         truepeak->tplimit = truepeak->peak / 2.0;
 }
 
-static void calc_peak(double* dblbuf[SWR_CH_MAX], int nb_samples, const int tgt_sample_rate, struct CalcContext *calc) {
+static void calc_peak(double* dblbuf[SWR_CH_MAX], int nb_samples, const int tgt_sample_rate, CalcContext *calc) {
     int i, k = 0;
     for (i=0; i<calc->nb_context; i++) {
         calc_peak_context(dblbuf + k, calc->nb_channels[i], nb_samples, tgt_sample_rate, &calc->peak[i]);
@@ -172,7 +172,7 @@ static void calc_peak(double* dblbuf[SWR_CH_MAX], int nb_samples, const int tgt_
     }
 }
 
-static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, struct OutputContext *out) {
+static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputContext *out) {
     const int tgt_sample_rate = SAMPLE_RATE;
     const enum AVSampleFormat tgt_sample_fmt = AV_SAMPLE_FMT_DBLP;
     int64_t c_channel_layout;
@@ -239,12 +239,12 @@ static void print_results(int nb_channel, int track, const char *filename, doubl
 /*
  * Audio decoding.
  */
-static int lufscalc_file(const char *filename, struct LufscalcConfig *conf)
+static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 {
     AVCodec *codec[MAX_STREAMS];
     AVCodecContext *c[MAX_STREAMS];
     AVFormatContext *ic = NULL;
-    struct OutputContext out[MAX_STREAMS];
+    OutputContext out[MAX_STREAMS];
     int err, i, j, k, ret = 0;
     AVPacket avpkt, pkt;
     AVFrame *decoded_frame = NULL;
@@ -252,14 +252,14 @@ static int lufscalc_file(const char *filename, struct LufscalcConfig *conf)
     char codecname[256];
     int nb_audio_streams = 0;
     int audio_streams[MAX_STREAMS];
-    struct CalcContext calc;
+    CalcContext calc;
     int sum_channels = 0;
     int channel_limit = 256;
     char *track_spec_temp;
     char *track_spec = conf->track_spec;
 
     av_init_packet(&pkt);
-    memset(&out, 0, MAX_STREAMS * sizeof(struct OutputContext));
+    memset(&out, 0, MAX_STREAMS * sizeof(OutputContext));
     memset(&calc, 0, sizeof(calc));
     for (i = 0; i < BS1770_CTX_CNT; i++) {
         calc.bs1770_ctx[i] = bs1770_ctx_open(MODE,GATE,BLOCK,PARTITION,REFERENCE);
@@ -445,7 +445,7 @@ static int lufscalc_file(const char *filename, struct LufscalcConfig *conf)
 int main(int argc, char **argv)
 {
     int ret = 0;
-    struct LufscalcConfig conf;
+    LufscalcConfig conf;
     int filecount = 0;
 
     /* register all the codecs */
