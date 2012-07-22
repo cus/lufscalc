@@ -433,7 +433,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
         for (i=0; i<nb_audio_streams; i++)
             if (out[i].buffer_pos)
-                av_log(conf, AV_LOG_INFO, "Buffer #%d is not empty after eof.\n", i);
+                av_log(conf, AV_LOG_WARNING, "Buffer #%d is not empty after eof.\n", i);
     
         av_log(conf, AV_LOG_INFO, "Decoding finished.\n");
         for (i=0; i<calc.nb_context; i++)
