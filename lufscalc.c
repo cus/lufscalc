@@ -286,10 +286,10 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         calc.peak[i].tplimit = pow(10, -fabs(conf->tplimit) / 20.0);
         calc.peak[i].peak = 0.0;
         if (!calc.bs1770_ctx[i])
-            panic("failed to initialize bs1770 context\n");
+            panic("failed to initialize bs1770 context");
     }
     if (!(decoded_frame = avcodec_alloc_frame()))
-        panic("out of memory allocating the frame\n");
+        panic("out of memory allocating the frame");
 
     if (fabs(conf->tplimit) != 0)
         av_log(conf, AV_LOG_INFO, "Calculating true peak above %.1f dBFS (%.2f) sample peak.\n", -fabs(conf->tplimit), pow(10, -fabs(conf->tplimit) / 20.0));
@@ -301,11 +301,11 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
     err = avformat_open_input(&ic, filename, NULL, NULL);
     if (err < 0)
-        panic("failed to open file\n");
+        panic("failed to open file");
 
     err = avformat_find_stream_info(ic, NULL);
     if (err < 0)
-        panic("could not find codec parameters\n");
+        panic("could not find codec parameters");
 
     if (conf->track_spec) {
         channel_limit = 0;
