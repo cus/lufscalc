@@ -92,10 +92,12 @@ typedef struct LufscalcConfig {
     double tplimit;
     char *track_spec;
     double peak_log_limit;
+    char *logfile;
 } LufscalcConfig;
 
 static const AVOption lufscalc_config_options[] = {
   { "tracks",       "track specification (2222 means four stereo tracks)",             offsetof(LufscalcConfig, track_spec),     AV_OPT_TYPE_STRING },
+  { "logfile",      "set logfile path for peak logging",                               offsetof(LufscalcConfig, logfile),        AV_OPT_TYPE_STRING },
   { "silent",       "only output the measured loudness and peak seperated by a space", offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "s",            "same as -silent",                                                 offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "resilient",    "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
@@ -285,6 +287,14 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     char *track_spec = conf->track_spec;
     int64_t nb_decoded_samples = 0;
     double peak_log_limit = pow(10, conf->peak_log_limit / 20.0);
+    FILE *logfile = NULL;
+
+    if (conf->logfile)
+        logfile = fopen(conf->logfile, "wx");
+    else
+        logfile = stdout;
+    if (!logfile)
+        panic("failed to open or create logfile");
 
     if (peak_log_limit < 100)
         av_log(conf, AV_LOG_INFO, "Logging peaks above %.1f dBFS peak.\n",  20 * log10(peak_log_limit));
@@ -435,7 +445,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
             for (i=0; i<calc.nb_context; i++)
                 if (peak_log_limit <= calc.peak[i].current_peak)
-                    fprintf(stdout, "%d %02d:%02d:%02d:%02d %.1f\n", i,
+                    fprintf(logfile, "%d %02d:%02d:%02d:%02d %.1f\n", i,
                                                               (int)(nb_decoded_samples / SAMPLE_RATE / 60 / 60),
                                                               (int)(nb_decoded_samples / SAMPLE_RATE / 60 % 60),
                                                               (int)(nb_decoded_samples / SAMPLE_RATE % 60),
@@ -466,6 +476,9 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         av_strerror(ret, errbuf, sizeof(errbuf));
         av_log(conf, AV_LOG_ERROR, "Decoding failed. %s.\n", errbuf);
     }
+
+    if (logfile != stdout)
+        fclose(logfile);
 
     for (i=0; i<nb_audio_streams; i++)
         avcodec_close(c[i]);
