@@ -58,6 +58,16 @@
 #define unlikely(x)     (x)
 #endif
 
+#ifdef FFMPEG_STATIC_BUILD
+#include "cmdutils.h"
+const char program_name[] = "lufscalc";
+const int program_birth_year = 2012;
+void av_noreturn exit_program(int ret)
+{
+    exit(ret);
+}
+#endif
+
 typedef struct OutputContext {
     int initialized;
     SwrContext *swr_ctx;
