@@ -60,7 +60,7 @@
 
 typedef struct OutputContext {
     int initialized;
-    struct SwrContext *swr_ctx;
+    SwrContext *swr_ctx;
     enum AVSampleFormat src_sample_fmt;
     int src_sample_rate;
     int last_channels;
@@ -70,7 +70,7 @@ typedef struct OutputContext {
     
 typedef struct TruePeakContext {
     int initialized;
-    struct SwrContext *swr_ctx[SWR_CH_MAX];
+    SwrContext *swr_ctx[SWR_CH_MAX];
     int swr_ctx_initialized[SWR_CH_MAX];
     double *buffers[1];
     double peak;
@@ -80,7 +80,7 @@ typedef struct TruePeakContext {
 typedef struct CalcContext {
     bs1770_ctx_t *bs1770_ctx[BS1770_CTX_CNT];
     int nb_channels[BS1770_CTX_CNT];
-    struct TruePeakContext peak[BS1770_CTX_CNT];
+    TruePeakContext peak[BS1770_CTX_CNT];
     int nb_context;
 } CalcContext;
 
