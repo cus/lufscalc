@@ -433,12 +433,14 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
             calc_lufs(bufs, min_nb_samples, SAMPLE_RATE, &calc);
             calc_peak(bufs, min_nb_samples, SAMPLE_RATE, &calc);
 
-            if (peak_log_limit <= calc.peak[0].current_peak)
-                fprintf(stdout, "%02d:%02d:%02d:%02d %.1f\n", (int)(nb_decoded_samples / SAMPLE_RATE / 60 / 60),
+            for (i=0; i<calc.nb_context; i++)
+                if (peak_log_limit <= calc.peak[i].current_peak)
+                    fprintf(stdout, "%d %02d:%02d:%02d:%02d %.1f\n", i,
+                                                              (int)(nb_decoded_samples / SAMPLE_RATE / 60 / 60),
                                                               (int)(nb_decoded_samples / SAMPLE_RATE / 60 % 60),
                                                               (int)(nb_decoded_samples / SAMPLE_RATE % 60),
                                                               (int)(nb_decoded_samples * 25 / SAMPLE_RATE % 25),
-                                                              20 * log10(calc.peak[0].current_peak));
+                                                              20 * log10(calc.peak[i].current_peak));
 
             for (i=0; i<nb_audio_streams; i++)
                 if (out[i].buffer_pos)
