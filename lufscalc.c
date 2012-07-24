@@ -74,6 +74,7 @@ typedef struct TruePeakContext {
     int swr_ctx_initialized[SWR_CH_MAX];
     double *buffers[1];
     double peak;
+    double current_peak;
     double tplimit;
 } TruePeakContext;
 
@@ -90,16 +91,17 @@ typedef struct LufscalcConfig {
     int resilient;
     double tplimit;
     char *track_spec;
-    int verbose_peak;
+    double peak_log_limit;
 } LufscalcConfig;
 
 static const AVOption lufscalc_config_options[] = {
-  { "tracks",    "track specification (2222 means four stereo tracks)",             offsetof(LufscalcConfig, track_spec), AV_OPT_TYPE_STRING },
-  { "silent",    "only output the measured loudness and peak seperated by a space", offsetof(LufscalcConfig, silent),     AV_OPT_TYPE_INT,    { 0 }, 0, 1 },
-  { "s",         "same as -silent",                                                 offsetof(LufscalcConfig, silent),     AV_OPT_TYPE_INT,    { 0 }, 0, 1 },
-  { "resilient", "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),  AV_OPT_TYPE_INT,    { 0 }, 0, 1 },
-  { "r",         "same as -resilient",                                              offsetof(LufscalcConfig, resilient),  AV_OPT_TYPE_INT,    { 0 }, 0, 1 },
-  { "tplimit",   "use true peak processing above this sample peak",                 offsetof(LufscalcConfig, tplimit),    AV_OPT_TYPE_DOUBLE, { 0 }, -INFINITY, INFINITY },
+  { "tracks",       "track specification (2222 means four stereo tracks)",             offsetof(LufscalcConfig, track_spec),     AV_OPT_TYPE_STRING },
+  { "silent",       "only output the measured loudness and peak seperated by a space", offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "s",            "same as -silent",                                                 offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "resilient",    "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "r",            "same as -resilient",                                              offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "peakloglimit", "log peaks which are above or equal to the limit",                 offsetof(LufscalcConfig, peak_log_limit), AV_OPT_TYPE_DOUBLE, { 200 }, -INFINITY, INFINITY },
+  { "tplimit",      "use true peak processing above this sample peak",                 offsetof(LufscalcConfig, tplimit),        AV_OPT_TYPE_DOUBLE, { 0 },   -INFINITY, INFINITY },
   { NULL },
 };
 
@@ -142,7 +144,8 @@ static double peak_max(double *buf, int nb_samples, double peak) {
 static void calc_peak_context(double* dblbuf[SWR_CH_MAX], int nb_channels, int nb_samples, const int tgt_sample_rate, TruePeakContext *truepeak) {
     int i;
     int nb_resampled_samples;
-    double peak;
+    double channel_peak;
+    double peak = 0;
     if (!truepeak->initialized) {
         for (i=0;i<nb_channels;i++) {
             truepeak->swr_ctx[i] = swr_alloc_set_opts(NULL,
@@ -158,9 +161,9 @@ static void calc_peak_context(double* dblbuf[SWR_CH_MAX], int nb_channels, int n
     }
 
     for (i=0; i<nb_channels; i++) {
-        peak = peak_max(dblbuf[i], nb_samples, 0.0);
+        channel_peak = peak_max(dblbuf[i], nb_samples, 0.0);
 
-        if (peak > truepeak->tplimit) {
+        if (channel_peak > truepeak->tplimit) {
             if (!truepeak->swr_ctx_initialized[i])
                 if (swr_init(truepeak->swr_ctx[i]) < 0)
                     panic("failed to init resampler");
@@ -173,13 +176,16 @@ static void calc_peak_context(double* dblbuf[SWR_CH_MAX], int nb_channels, int n
             if (nb_resampled_samples == BUFSIZE / av_get_bytes_per_sample(AV_SAMPLE_FMT_DBLP))
                 panic("audio buffer is probably too small");
     
-            peak = peak_max(truepeak->buffers[0], nb_resampled_samples, peak);
+            channel_peak = peak_max(truepeak->buffers[0], nb_resampled_samples, channel_peak);
         } else {
             truepeak->swr_ctx_initialized[i] = 0;
         }
         
-        truepeak->peak = FFMAX(peak, truepeak->peak);
+        peak = FFMAX(channel_peak, peak);
     }
+
+    truepeak->current_peak = peak;
+    truepeak->peak = FFMAX(peak, truepeak->peak);
     if (truepeak->peak / 2.0 > truepeak->tplimit)
         truepeak->tplimit = truepeak->peak / 2.0;
 }
@@ -277,6 +283,11 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     int channel_limit = 256;
     char *track_spec_temp;
     char *track_spec = conf->track_spec;
+    int64_t nb_decoded_samples = 0;
+    double peak_log_limit = pow(10, conf->peak_log_limit / 20.0);
+
+    if (peak_log_limit < 100)
+        av_log(conf, AV_LOG_INFO, "Logging peaks above %.1f dBFS peak.\n",  20 * log10(peak_log_limit));
 
     av_init_packet(&pkt);
     memset(&out, 0, MAX_STREAMS * sizeof(OutputContext));
@@ -422,10 +433,19 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
             calc_lufs(bufs, min_nb_samples, SAMPLE_RATE, &calc);
             calc_peak(bufs, min_nb_samples, SAMPLE_RATE, &calc);
 
+            if (peak_log_limit <= calc.peak[0].current_peak)
+                fprintf(stdout, "%02d:%02d:%02d:%02d %.1f\n", (int)(nb_decoded_samples / SAMPLE_RATE / 60 / 60),
+                                                              (int)(nb_decoded_samples / SAMPLE_RATE / 60 % 60),
+                                                              (int)(nb_decoded_samples / SAMPLE_RATE % 60),
+                                                              (int)(nb_decoded_samples * 25 / SAMPLE_RATE % 25),
+                                                              20 * log10(calc.peak[0].current_peak));
+
             for (i=0; i<nb_audio_streams; i++)
                 if (out[i].buffer_pos)
                     for (j=0;j<out[i].last_channels;j++)
                         memmove(out[i].buffers[j], out[i].buffers[j] + min_nb_samples, out[i].buffer_pos * av_get_bytes_per_sample(AV_SAMPLE_FMT_DBLP));
+
+            nb_decoded_samples += min_nb_samples;
         }
     }
 
@@ -499,7 +519,7 @@ int main(int argc, char **argv)
                     if (!strcmp(argv[0], "-h")) {
                         fprintf(stderr, "Lufscalc, built at %s %s\nCommand line parameters:\n", __DATE__, __TIME__);
                         for (option = lufscalc_config_options; option->name; option++)
-                            fprintf(stderr, " -%-9s %3s %s\n", option->name, (option->type == AV_OPT_TYPE_INT && option->min == 0 && option->max == 1) ? "": (option->type == AV_OPT_TYPE_STRING) ? "<s>" : "<d>", option->help);
+                            fprintf(stderr, " -%-13s %3s %s\n", option->name, (option->type == AV_OPT_TYPE_INT && option->min == 0 && option->max == 1) ? "": (option->type == AV_OPT_TYPE_STRING) ? "<s>" : "<d>", option->help);
                         break;
                     }
                     if (!strcmp(argv[0], "-tp")) {
