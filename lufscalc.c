@@ -267,6 +267,41 @@ static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputCont
 
 }
 
+int calc_available_audio_samples(CalcContext *calc, OutputContext out[], int nb_audio_streams, int64_t nb_decoded_samples, double peak_log_limit, FILE *logfile) {
+    int i, j, k;
+    int min_nb_samples = out[0].buffer_pos;
+    for (i=1; i<nb_audio_streams; i++)
+        min_nb_samples = FFMIN(min_nb_samples, out[i].buffer_pos);
+
+    if (min_nb_samples) {
+        double *bufs[SWR_CH_MAX];
+        k = 0;
+        for (i=0; i<nb_audio_streams; i++) {
+            for (j=0;j<out[i].last_channels;j++)
+                bufs[k++] = out[i].buffers[j];
+            out[i].buffer_pos -= min_nb_samples;
+        }
+
+        calc_lufs(bufs, min_nb_samples, SAMPLE_RATE, calc);
+        calc_peak(bufs, min_nb_samples, SAMPLE_RATE, calc);
+
+        for (i=0; i<calc->nb_context; i++)
+            if (peak_log_limit <= calc->peak[i].current_peak)
+                fprintf(logfile, "%d %02d:%02d:%02d:%02d %.1f\n", i,
+                                                          (int)(nb_decoded_samples / SAMPLE_RATE / 60 / 60),
+                                                          (int)(nb_decoded_samples / SAMPLE_RATE / 60 % 60),
+                                                          (int)(nb_decoded_samples / SAMPLE_RATE % 60),
+                                                          (int)(nb_decoded_samples * 25 / SAMPLE_RATE % 25),
+                                                          20 * log10(calc->peak[i].current_peak));
+        for (i=0; i<nb_audio_streams; i++)
+            if (out[i].buffer_pos)
+                for (j=0;j<out[i].last_channels;j++)
+                    memmove(out[i].buffers[j], out[i].buffers[j] + min_nb_samples, out[i].buffer_pos * av_get_bytes_per_sample(AV_SAMPLE_FMT_DBLP));
+    }
+
+    return min_nb_samples;
+}
+
 static void print_results(int nb_channel, int track, const char *filename, double lufs, double peak, int silent) {
     if (silent) 
        fprintf(stdout, "%.1f %.1f\n", lufs, peak);
@@ -283,7 +318,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     AVCodecContext *c[MAX_STREAMS];
     AVFormatContext *ic = NULL;
     OutputContext out[MAX_STREAMS];
-    int err, i, j, k, ret = 0;
+    int err, i, j, ret = 0;
     AVPacket avpkt, pkt;
     AVFrame *decoded_frame = NULL;
     int eof = 0;
@@ -397,8 +432,6 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         panic("channel count is not enough for track specification");
 
     while (ret == 0) {
-        int min_nb_samples;
-
         ret = av_read_frame(ic, &pkt);
         
         if (ret < 0) {
@@ -437,38 +470,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
         av_free_packet(&pkt);
 
-        min_nb_samples = out[0].buffer_pos;
-        for (i=1; i<nb_audio_streams; i++)
-            min_nb_samples = FFMIN(min_nb_samples, out[i].buffer_pos);
-
-        if (min_nb_samples) {
-            double *bufs[SWR_CH_MAX];
-            k = 0;
-            for (i=0; i<nb_audio_streams; i++) {
-                for (j=0;j<out[i].last_channels;j++)
-                    bufs[k++] = out[i].buffers[j];
-                out[i].buffer_pos -= min_nb_samples;
-            }
-
-            calc_lufs(bufs, min_nb_samples, SAMPLE_RATE, &calc);
-            calc_peak(bufs, min_nb_samples, SAMPLE_RATE, &calc);
-
-            for (i=0; i<calc.nb_context; i++)
-                if (peak_log_limit <= calc.peak[i].current_peak)
-                    fprintf(logfile, "%d %02d:%02d:%02d:%02d %.1f\n", i,
-                                                              (int)(nb_decoded_samples / SAMPLE_RATE / 60 / 60),
-                                                              (int)(nb_decoded_samples / SAMPLE_RATE / 60 % 60),
-                                                              (int)(nb_decoded_samples / SAMPLE_RATE % 60),
-                                                              (int)(nb_decoded_samples * 25 / SAMPLE_RATE % 25),
-                                                              20 * log10(calc.peak[i].current_peak));
-
-            for (i=0; i<nb_audio_streams; i++)
-                if (out[i].buffer_pos)
-                    for (j=0;j<out[i].last_channels;j++)
-                        memmove(out[i].buffers[j], out[i].buffers[j] + min_nb_samples, out[i].buffer_pos * av_get_bytes_per_sample(AV_SAMPLE_FMT_DBLP));
-
-            nb_decoded_samples += min_nb_samples;
-        }
+        nb_decoded_samples += calc_available_audio_samples(&calc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile);
     }
 
     if (eof) {
