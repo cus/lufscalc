@@ -551,6 +551,8 @@ int main(int argc, char **argv)
                         conf.tplimit = INFINITY;
                         continue;
                     }
+                    if (conf.track_spec)
+                        panic("tracks option is already set!");
                     option = lufscalc_config_options;
                     value = argv[0]+1;
                 } else if (option->type == AV_OPT_TYPE_INT && option->min == 0 && option->max == 1) {
