@@ -66,6 +66,9 @@ void av_noreturn exit_program(int ret)
 {
     exit(ret);
 }
+void show_help_default(const char *opt, const char *arg)
+{
+}
 #endif
 
 typedef struct OutputContext {
@@ -267,7 +270,7 @@ static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputCont
 
 }
 
-int calc_available_audio_samples(CalcContext *calc, OutputContext out[], int nb_audio_streams, int64_t nb_decoded_samples, double peak_log_limit, FILE *logfile) {
+static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], int nb_audio_streams, int64_t nb_decoded_samples, double peak_log_limit, FILE *logfile) {
     int i, j, k;
     int min_nb_samples = out[0].buffer_pos;
     for (i=1; i<nb_audio_streams; i++)

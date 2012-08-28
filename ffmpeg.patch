@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index 96b7f91..4e59d79 100644
+index e77dbe6..6d012b7 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -12,6 +12,7 @@ vpath %/fate_config.sh.template $(SRC_PATH)
@@ -10,7 +10,7 @@ index 96b7f91..4e59d79 100644
  PROGS-$(CONFIG_FFPROBE)  += ffprobe
  PROGS-$(CONFIG_FFSERVER) += ffserver
  
-@@ -23,7 +24,7 @@ HOSTPROGS  := $(TESTTOOLS:%=tests/%) doc/print_options
+@@ -24,7 +25,7 @@ HOSTPROGS  := $(TESTTOOLS:%=tests/%) doc/print_options
  TOOLS       = qt-faststart trasher
  TOOLS-$(CONFIG_ZLIB) += cws2fws
  
@@ -19,15 +19,13 @@ index 96b7f91..4e59d79 100644
  ALLPROGS    = $(BASENAMES:%=%$(PROGSSUF)$(EXESUF))
  ALLPROGS_G  = $(BASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
  ALLMANPAGES = $(BASENAMES:%=%.1)
-@@ -88,9 +89,11 @@ endef
+@@ -101,6 +102,9 @@ endef
  
- $(foreach D,$(FFLIBS),$(eval $(call DOSUBDIR,lib$(D))))
+ $(foreach P,$(PROGS-yes),$(eval $(call DOPROG,$(P))))
  
 +lufscalc.o: CFLAGS += -Ibs1770/ -DFFMPEG_STATIC_BUILD
- ffplay.o: CFLAGS += $(SDL_CFLAGS)
- ffplay_g$(EXESUF): FF_EXTRALIBS += $(SDL_LIBS)
- ffserver_g$(EXESUF): LDFLAGS += $(FFSERVERLDFLAGS)
 +lufscalc_g$(EXESUF): LDFLAGS += bs1770/*.o
- 
++
  %$(PROGSSUF)_g$(EXESUF): %.o cmdutils.o $(FF_DEP_LIBS)
- 	$(LD) $(LDFLAGS) -o $@ $< cmdutils.o $(FF_EXTRALIBS)
+ 	$(LD) $(LDFLAGS) -o $@ $(OBJS-$*) cmdutils.o $(FF_EXTRALIBS)
+ 
