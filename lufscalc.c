@@ -106,6 +106,7 @@ typedef struct LufscalcConfig {
     char *track_spec;
     double peak_log_limit;
     char *logfile;
+    int crlf;
 } LufscalcConfig;
 
 static const AVOption lufscalc_config_options[] = {
@@ -115,6 +116,7 @@ static const AVOption lufscalc_config_options[] = {
   { "s",            "same as -silent",                                                 offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "resilient",    "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "r",            "same as -resilient",                                              offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "crlf",         "write crlf to the end of logfile lines",                          offsetof(LufscalcConfig, crlf),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "peakloglimit", "log peaks which are above or equal to the limit",                 offsetof(LufscalcConfig, peak_log_limit), AV_OPT_TYPE_DOUBLE, { 200 }, -INFINITY, INFINITY },
   { "tplimit",      "use true peak processing above this sample peak",                 offsetof(LufscalcConfig, tplimit),        AV_OPT_TYPE_DOUBLE, { 0 },   -INFINITY, INFINITY },
   { NULL },
@@ -270,7 +272,7 @@ static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputCont
 
 }
 
-static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], int nb_audio_streams, int64_t nb_decoded_samples, double peak_log_limit, FILE *logfile) {
+static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], int nb_audio_streams, int64_t nb_decoded_samples, double peak_log_limit, FILE *logfile, int crlf) {
     int i, j, k;
     int min_nb_samples = out[0].buffer_pos;
     for (i=1; i<nb_audio_streams; i++)
@@ -290,12 +292,13 @@ static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], 
 
         for (i=0; i<calc->nb_context; i++)
             if (peak_log_limit <= calc->peak[i].current_peak)
-                fprintf(logfile, "%d %02d:%02d:%02d:%02d %.1f\n", i,
+                fprintf(logfile, "%d %02d:%02d:%02d:%02d %.1f%s\n", i,
                                                           (int)(nb_decoded_samples / SAMPLE_RATE / 60 / 60),
                                                           (int)(nb_decoded_samples / SAMPLE_RATE / 60 % 60),
                                                           (int)(nb_decoded_samples / SAMPLE_RATE % 60),
                                                           (int)(nb_decoded_samples * 25 / SAMPLE_RATE % 25),
-                                                          20 * log10(calc->peak[i].current_peak));
+                                                          20 * log10(calc->peak[i].current_peak),
+                                                          crlf ? "\r" : "");
         for (i=0; i<nb_audio_streams; i++)
             if (out[i].buffer_pos)
                 for (j=0;j<out[i].last_channels;j++)
@@ -473,7 +476,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
         av_free_packet(&pkt);
 
-        nb_decoded_samples += calc_available_audio_samples(&calc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile);
+        nb_decoded_samples += calc_available_audio_samples(&calc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile, conf->crlf);
     }
 
     if (eof) {
