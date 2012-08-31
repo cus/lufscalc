@@ -6,7 +6,7 @@ index e77dbe6..6d012b7 100644
  
  PROGS-$(CONFIG_FFMPEG)   += ffmpeg
  PROGS-$(CONFIG_FFPLAY)   += ffplay
-+PROGS-$(CONFIG_FFPLAY)   += lufscalc
++PROGS-$(CONFIG_FFMPEG)   += lufscalc
  PROGS-$(CONFIG_FFPROBE)  += ffprobe
  PROGS-$(CONFIG_FFSERVER) += ffserver
  
