@@ -1,7 +1,7 @@
 # use pkg-config for getting CFLAGS abd LDFLAGS
-FFMPEG_LIBS=libavdevice libavformat libavfilter libavcodec libswscale libavutil
+FFMPEG_LIBS=libavdevice libavformat libavfilter libavcodec libswscale libavutil libswresample
 CFLAGS+=-Wall $(shell pkg-config  --cflags $(FFMPEG_LIBS)) -O3 -I bs1770
-LDFLAGS+=$(shell pkg-config --libs $(FFMPEG_LIBS))
+LDFLAGS+=$(shell pkg-config --libs $(FFMPEG_LIBS)) -lm
 BS1770OBJS=bs1770/biquad.o bs1770/bs1770.o bs1770/bs1770_ctx.o bs1770/bs1770_stats.o bs1770/bs1770_stats_h.o bs1770/bs1770_stats_s.o
 
 EXAMPLES=lufscalc
