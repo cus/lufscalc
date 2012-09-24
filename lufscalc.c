@@ -362,7 +362,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         av_log(conf, AV_LOG_INFO, "Calculating true peak above %.1f dBFS (%.2f) sample peak.\n", -fabs(conf->tplimit), pow(10, -fabs(conf->tplimit) / 20.0));
     else
         av_log(conf, AV_LOG_INFO, "Calculating sample peak.\n");
-    av_log(conf, AV_LOG_INFO, "Staring audio decoding of %s ...\n", filename);
+    av_log(conf, AV_LOG_INFO, "Starting audio decoding of %s ...\n", filename);
     
     ic = avformat_alloc_context();
 
