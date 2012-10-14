@@ -57,10 +57,6 @@
 #include "cmdutils.h"
 const char program_name[] = "lufscalc";
 const int program_birth_year = 2012;
-void av_noreturn exit_program(int ret)
-{
-    exit(ret);
-}
 void show_help_default(const char *opt, const char *arg)
 {
 }
