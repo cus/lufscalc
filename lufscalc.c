@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <stddef.h>
 #include <math.h>
+#include <string.h>
 #include "libavcodec/avcodec.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/mathematics.h"
@@ -43,6 +44,8 @@
 #define SAMPLE_RATE 48000
 #define BUFSIZE (192000 * 4)
 #define CH_MAX 32
+
+#define MAX_SEGMENTS 5000
 
 #ifdef __GNUC__
 #define likely(x)       __builtin_expect((x),1)
@@ -90,6 +93,14 @@ typedef struct CalcContext {
     int nb_context;
 } CalcContext;
 
+typedef struct SegmentContext {
+    int nb_segments;
+    int actual;
+    int start[MAX_SEGMENTS];
+    int end[MAX_SEGMENTS];
+    char *info[MAX_SEGMENTS];
+} SegmentContext;
+
 typedef struct LufscalcConfig {
     const AVClass *class;
     int silent;
@@ -100,6 +111,9 @@ typedef struct LufscalcConfig {
     char *track_spec;
     double peak_log_limit;
     char *logfile;
+    char *segfile;
+    int segchan;
+    int segoffs;
     int crlf;
     int speedlimit;
     int status;
@@ -126,6 +140,9 @@ static const AVOption lufscalc_config_options[] = {
   { "peakloglimit", "log peaks which are above or equal to the limit",                 offsetof(LufscalcConfig, peak_log_limit), AV_OPT_TYPE_DOUBLE, { .dbl = 200.0 }, -INFINITY, INFINITY },
   { "tplimit",      "use true peak processing above this sample peak",                 offsetof(LufscalcConfig, tplimit),        AV_OPT_TYPE_DOUBLE, { .dbl = 0.0   }, -INFINITY, INFINITY },
   { "speedlimit",   "set processing speed limit",                                      offsetof(LufscalcConfig, speedlimit),     AV_OPT_TYPE_INT,    { 0 },   0, INT_MAX },
+  { "segfile",      "set file which contains segment information",                     offsetof(LufscalcConfig, segfile),        AV_OPT_TYPE_STRING },
+  { "segchan",      "set segment file channel ID",                                     offsetof(LufscalcConfig, segchan),        AV_OPT_TYPE_INT,    {  10007 },  0, 65535 },
+  { "segoffs",      "set video file start delay from 00:00 in frames",                 offsetof(LufscalcConfig, segoffs),        AV_OPT_TYPE_INT,    { 450000 + 75 },  -15120000, 15120000 },
   { NULL },
 };
 
@@ -286,7 +303,7 @@ static void output_samples(AVFrame *frame, OutputContext *out, int downmix) {
 
 }
 
-static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], int nb_audio_streams, int64_t nb_decoded_samples, double peak_log_limit, FILE *logfile, int crlf) {
+static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], int nb_audio_streams, int64_t nb_decoded_samples, double peak_log_limit, FILE *logfile, int crlf, SegmentContext *segs) {
     int i, j, k;
     int min_nb_samples = out[0].buffer_pos;
     for (i=1; i<nb_audio_streams; i++)
@@ -313,6 +330,19 @@ static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], 
                                                           (int)(nb_decoded_samples * 25 / SAMPLE_RATE % 25),
                                                           20 * log10(calc->peak[i].current_peak),
                                                           crlf ? "\r" : "");
+        if (segs && segs->actual < segs->nb_segments) {
+            int pos = nb_decoded_samples * 25 / SAMPLE_RATE;
+            if (segs->start[segs->actual] > pos) {
+                for (i=0; i<calc->nb_context; i++)
+                    bs1770_ctx_track_lufs(calc->bs1770_ctx[i], SAMPLE_RATE, calc->nb_channels[i]);
+            } else if (segs->end[segs->actual] < pos) {
+                for (i=0; i<calc->nb_context; i++)
+                    fprintf(stdout, "%d,%.1f,%s\n", i, bs1770_ctx_track_lufs(calc->bs1770_ctx[i], SAMPLE_RATE, calc->nb_channels[i]), segs->info[segs->actual]);
+                fflush(stdout);
+                segs->actual++;
+            }
+        }
+
         for (i=0; i<nb_audio_streams; i++)
             if (out[i].buffer_pos)
                 for (j=0;j<out[i].last_channels;j++)
@@ -344,6 +374,43 @@ static void print_results(int nb_channel, int track, const char *filename, doubl
     }
 }
 
+static int tc2frames(int tc) {
+  return ((tc % 100) + ((tc / 100) % 100) * 60 + (tc / 100 / 100) * 3600) * 25;
+}
+
+static SegmentContext* load_segments(const char * filename, int segchan, int segoffs) {
+    FILE *f;
+    char temp[1000];
+    int dummy, start, end, len, channel;
+    SegmentContext *seg;
+    f = fopen(filename, "r");
+    if (!f)
+        return NULL;
+    seg = calloc(1, sizeof(SegmentContext));
+    if (!seg)
+        goto out;
+    fgets(temp, sizeof(temp), f);
+    while (fgets(temp, sizeof(temp), f) && seg->nb_segments < MAX_SEGMENTS) {
+       sscanf(temp, "%d,%d,%d,%d,%d,%d", &dummy,&channel,&dummy,&start,&end,&len);
+       if (channel == segchan) {
+         start = tc2frames(start) - segoffs;
+         end   = tc2frames(end)   - segoffs;
+         if (end > start && start >= 0 && (seg->nb_segments == 0 || start > seg->end[seg->nb_segments - 1]) && !strstr(temp, "\"N\"") && !strstr(temp, "\"G\"")) {
+             seg->start[seg->nb_segments] = start;
+             seg->end[seg->nb_segments] = end;
+             if (strpbrk(temp, "\r\n"))
+                 *strpbrk(temp, "\r\n") = '\0';
+             seg->info[seg->nb_segments] = malloc(strlen(temp) + 1);
+             strcpy(seg->info[seg->nb_segments], temp);
+             seg->nb_segments++;
+         }
+       }
+    }
+out:
+    fclose(f);
+    return seg;
+}
+
 /*
  * Audio decoding.
  */
@@ -353,6 +420,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     AVCodecContext *c[MAX_STREAMS];
     AVFormatContext *ic = NULL;
     OutputContext out[MAX_STREAMS];
+    SegmentContext *segs = NULL;
     int err, i, j, ret = 0;
     AVPacket avpkt, pkt;
     AVFrame *decoded_frame = NULL;
@@ -377,6 +445,15 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         logfile = stdout;
     if (!logfile)
         panic("failed to open or create logfile");
+
+    if (conf->segfile) {
+        if (!(segs = load_segments(conf->segfile, conf->segchan, conf->segoffs))) {
+            panic("failed to load segment file");
+        } else {
+            av_log(conf, AV_LOG_INFO, "Loaded %d segments from %s\n", segs->nb_segments, conf->segfile);
+        }
+    }
+
 
     if (peak_log_limit < 100)
         av_log(conf, AV_LOG_INFO, "Logging peaks above %.1f dBFS peak.\n",  20 * log10(peak_log_limit));
@@ -513,7 +590,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
         av_free_packet(&pkt);
 
-        nb_decoded_samples += calc_available_audio_samples(&calc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile, conf->crlf);
+        nb_decoded_samples += calc_available_audio_samples(&calc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile, conf->crlf, segs);
 
         if (conf->speedlimit || conf->status) {
             starttime_diff = av_gettime() - starttime;
@@ -539,6 +616,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                 av_log(conf, AV_LOG_WARNING, "Buffer #%d is not empty after eof.\n", i);
     
         av_log(conf, AV_LOG_INFO, "Decoding finished.\n");
+        if (!segs) {
         if (conf->json)
             printf("%s", "[\n");
         for (i=0; i<calc.nb_context; i++) {
@@ -552,6 +630,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         }
         if (conf->json)
             printf("%s", "]\n");
+        }
 
     } else {
         char errbuf[256] = "Unknown error";
@@ -561,6 +640,12 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
     if (logfile != stdout)
         fclose(logfile);
+
+    if (segs) {
+        for (i=0; i<segs->nb_segments; i++)
+            free(segs->info[i]);
+        free(segs);
+    }
 
     for (i=0; i<nb_audio_streams; i++)
         avcodec_close(c[i]);
