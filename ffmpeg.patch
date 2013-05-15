@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index e77dbe6..6d012b7 100644
+index 7addffb..4d423aa 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -12,6 +12,7 @@ vpath %/fate_config.sh.template $(SRC_PATH)
@@ -10,7 +10,7 @@ index e77dbe6..6d012b7 100644
  PROGS-$(CONFIG_FFPROBE)  += ffprobe
  PROGS-$(CONFIG_FFSERVER) += ffserver
  
-@@ -24,7 +25,7 @@ HOSTPROGS  := $(TESTTOOLS:%=tests/%) doc/print_options
+@@ -25,7 +26,7 @@ HOSTPROGS  := $(TESTTOOLS:%=tests/%) doc/print_options
  TOOLS       = qt-faststart trasher
  TOOLS-$(CONFIG_ZLIB) += cws2fws
  
@@ -19,13 +19,13 @@ index e77dbe6..6d012b7 100644
  ALLPROGS    = $(BASENAMES:%=%$(PROGSSUF)$(EXESUF))
  ALLPROGS_G  = $(BASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
  ALLMANPAGES = $(BASENAMES:%=%.1)
-@@ -101,6 +102,9 @@ endef
+@@ -102,6 +103,9 @@ endef
  
  $(foreach P,$(PROGS-yes),$(eval $(call DOPROG,$(P))))
  
 +lufscalc.o: CFLAGS += -Ibs1770/ -DFFMPEG_STATIC_BUILD
 +lufscalc_g$(EXESUF): LDFLAGS += bs1770/*.o
 +
- %$(PROGSSUF)_g$(EXESUF): %.o cmdutils.o $(FF_DEP_LIBS)
- 	$(LD) $(LDFLAGS) -o $@ $(OBJS-$*) cmdutils.o $(FF_EXTRALIBS)
+ %$(PROGSSUF)_g$(EXESUF): %.o $(FF_DEP_LIBS)
+ 	$(LD) $(LDFLAGS) $(LD_O) $(OBJS-$*) $(FF_EXTRALIBS)
  

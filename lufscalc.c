@@ -43,7 +43,7 @@
 #define BS1770_CTX_CNT 32
 #define MAX_STREAMS 16
 #define SAMPLE_RATE 48000
-#define BUFSIZE (AVCODEC_MAX_AUDIO_FRAME_SIZE * 4)
+#define BUFSIZE (192000 * 4)
 
 #ifdef __GNUC__
 #define likely(x)       __builtin_expect((x),1)
