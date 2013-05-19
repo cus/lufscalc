@@ -115,6 +115,7 @@ typedef struct LufscalcConfig {
     int segchan;
     int segoffs;
     int segframes;
+    int segpts;
     int crlf;
     int speedlimit;
     int status;
@@ -145,6 +146,7 @@ static const AVOption lufscalc_config_options[] = {
   { "segchan",      "set segment file channel ID",                                     offsetof(LufscalcConfig, segchan),        AV_OPT_TYPE_INT,    {  10007 },  0, 65535 },
   { "segoffs",      "set video file start delay from 00:00 in frames",                 offsetof(LufscalcConfig, segoffs),        AV_OPT_TYPE_INT,    { 450000 + 75 },  -15120000, 15120000 },
   { "segframes",    "segment file contains full timecodes and not seconds",            offsetof(LufscalcConfig, segframes),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "segpts",       "use avpacket pts for file position during segmentation",          offsetof(LufscalcConfig, segpts),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { NULL },
 };
 
@@ -572,6 +574,8 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         for (i=0; i<nb_audio_streams; i++) {
             if (audio_streams[i] == pkt.stream_index) {
                 avpkt = pkt;
+                if (conf->segpts && pkt.pts != AV_NOPTS_VALUE)
+                    nb_decoded_samples = av_rescale_q(pkt.pts, ic->streams[pkt.stream_index]->time_base, (AVRational){1, 48000});
                 while (avpkt.size > 0) {
                     int got_frame = 0;
                     int len;
