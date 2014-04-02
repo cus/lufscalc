@@ -30,6 +30,7 @@
 #include "libavutil/error.h"
 #include "libavutil/opt.h"
 #include "libavutil/log.h"
+#include "libavutil/time.h"
 #include "libavformat/avformat.h"
 #include "libswresample/swresample.h"
 
@@ -98,6 +99,7 @@ typedef struct LufscalcConfig {
     double peak_log_limit;
     char *logfile;
     int crlf;
+    int speedlimit;
 } LufscalcConfig;
 
 static const AVOption lufscalc_config_options[] = {
@@ -110,6 +112,7 @@ static const AVOption lufscalc_config_options[] = {
   { "crlf",         "write crlf to the end of logfile lines",                          offsetof(LufscalcConfig, crlf),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "peakloglimit", "log peaks which are above or equal to the limit",                 offsetof(LufscalcConfig, peak_log_limit), AV_OPT_TYPE_DOUBLE, { .dbl = 200.0 }, -INFINITY, INFINITY },
   { "tplimit",      "use true peak processing above this sample peak",                 offsetof(LufscalcConfig, tplimit),        AV_OPT_TYPE_DOUBLE, { .dbl = 0.0   }, -INFINITY, INFINITY },
+  { "speedlimit",   "set processing speed limit",                                      offsetof(LufscalcConfig, speedlimit),     AV_OPT_TYPE_INT,    { 0 },   0, INT_MAX },
   { NULL },
 };
 
@@ -329,6 +332,8 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     char *track_spec = conf->track_spec;
     int64_t nb_decoded_samples = 0;
     double peak_log_limit = pow(10, conf->peak_log_limit / 20.0);
+    int64_t starttime, starttime_diff;
+    int64_t starttime_nb_decoded_samples = 0;
     FILE *logfile = NULL;
 
     if (conf->logfile)
@@ -428,6 +433,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     if (track_spec && *track_spec)
         panic("channel count is not enough for track specification");
 
+    starttime = av_gettime();
     while (ret == 0) {
         ret = av_read_frame(ic, &pkt);
         
@@ -468,6 +474,17 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         av_free_packet(&pkt);
 
         nb_decoded_samples += calc_available_audio_samples(&calc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile, conf->crlf);
+
+        if (conf->speedlimit) {
+            starttime_diff = av_gettime() - starttime;
+            if (starttime_diff < 0 || starttime_diff > 1000000) {
+                starttime = av_gettime();
+                starttime_nb_decoded_samples = nb_decoded_samples;
+                starttime_diff = 1;
+            }
+            if (!starttime_diff || (nb_decoded_samples - starttime_nb_decoded_samples) * 1000000 / starttime_diff > conf->speedlimit * SAMPLE_RATE)
+                usleep(40000);
+        }
     }
 
     if (eof) {
