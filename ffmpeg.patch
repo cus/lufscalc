@@ -1,27 +1,27 @@
 diff --git a/Makefile b/Makefile
-index 7addffb..4d423aa 100644
+index ca9e511..286e9e0 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -12,6 +12,7 @@ vpath %/fate_config.sh.template $(SRC_PATH)
+@@ -14,6 +14,7 @@ vpath %/fate_config.sh.template $(SRC_PATH)
  
- PROGS-$(CONFIG_FFMPEG)   += ffmpeg
- PROGS-$(CONFIG_FFPLAY)   += ffplay
-+PROGS-$(CONFIG_FFMPEG)   += lufscalc
- PROGS-$(CONFIG_FFPROBE)  += ffprobe
- PROGS-$(CONFIG_FFSERVER) += ffserver
+ AVPROGS-$(CONFIG_FFMPEG)   += ffmpeg
+ AVPROGS-$(CONFIG_FFPLAY)   += ffplay
++AVPROGS-$(CONFIG_FFMPEG)   += lufscalc
+ AVPROGS-$(CONFIG_FFPROBE)  += ffprobe
+ AVPROGS-$(CONFIG_FFSERVER) += ffserver
  
-@@ -25,7 +26,7 @@ HOSTPROGS  := $(TESTTOOLS:%=tests/%) doc/print_options
- TOOLS       = qt-faststart trasher
- TOOLS-$(CONFIG_ZLIB) += cws2fws
+@@ -21,7 +22,7 @@ AVPROGS    := $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
+ INSTPROGS   = $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
+ PROGS      += $(AVPROGS)
  
--BASENAMES   = ffmpeg ffplay ffprobe ffserver
-+BASENAMES   = ffmpeg ffplay ffprobe ffserver lufscalc
- ALLPROGS    = $(BASENAMES:%=%$(PROGSSUF)$(EXESUF))
- ALLPROGS_G  = $(BASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
- ALLMANPAGES = $(BASENAMES:%=%.1)
-@@ -102,6 +103,9 @@ endef
+-AVBASENAMES  = ffmpeg ffplay ffprobe ffserver
++AVBASENAMES  = ffmpeg ffplay ffprobe ffserver lufscalc
+ ALLAVPROGS   = $(AVBASENAMES:%=%$(PROGSSUF)$(EXESUF))
+ ALLAVPROGS_G = $(AVBASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
  
- $(foreach P,$(PROGS-yes),$(eval $(call DOPROG,$(P))))
+@@ -112,6 +113,9 @@ $(PROGS): %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
+ 	$(CP) $< $@
+ 	$(STRIP) $@
  
 +lufscalc.o: CFLAGS += -Ibs1770/ -DFFMPEG_STATIC_BUILD
 +lufscalc_g$(EXESUF): LDFLAGS += bs1770/*.o
