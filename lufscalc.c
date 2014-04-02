@@ -55,6 +55,7 @@
 #endif
 
 #ifdef FFMPEG_STATIC_BUILD
+#define CONFIG_OPENCL 0
 #include "cmdutils.h"
 const char program_name[] = "lufscalc";
 const int program_birth_year = 2012;
@@ -356,7 +357,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         if (!calc.bs1770_ctx[i])
             panic("failed to initialize bs1770 context");
     }
-    if (!(decoded_frame = avcodec_alloc_frame()))
+    if (!(decoded_frame = av_frame_alloc()))
         panic("out of memory allocating the frame");
 
     if (fabs(conf->tplimit) != 0)
@@ -555,7 +556,7 @@ int main(int argc, char **argv)
         if (!filecount) {
             if (argv[0][0] == '-') {
                 const AVOption *option = av_opt_find2(&conf, (const char*)(argv[0]+1), NULL, 0, 0, NULL);
-                char *value;
+                const char *value;
                 if (!option) {
                     if (!strcmp(argv[0], "-h")) {
                         fprintf(stderr, "Lufscalc, built at %s %s\nCommand line parameters:\n", __DATE__, __TIME__);
