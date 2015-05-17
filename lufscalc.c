@@ -411,6 +411,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         c[i] = ic->streams[stream_index]->codec;
         avcodec_string(codecname, sizeof(codecname), c[i], 0);
         av_log(conf, AV_LOG_INFO, "Stream %d: %s\n", stream_index, codecname);
+        av_opt_set_int(c[i], "refcounted_frames", 1, 0);
         if (avcodec_open2(c[i], codec[i], NULL) < 0)
             panic("could not open codec");
     }
@@ -452,8 +453,6 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                 while (avpkt.size > 0) {
                     int got_frame = 0;
                     int len;
-        
-                    avcodec_get_frame_defaults(decoded_frame);
         
                     len = avcodec_decode_audio4(c[i], decoded_frame, &got_frame, &avpkt);
                     if (len < 0) {
