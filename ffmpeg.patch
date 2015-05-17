@@ -1,25 +1,27 @@
 diff --git a/Makefile b/Makefile
-index ca9e511..286e9e0 100644
+index fd59628..be19b10 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -14,6 +14,7 @@ vpath %/fate_config.sh.template $(SRC_PATH)
+@@ -61,7 +61,7 @@ include $(SRC_PATH)/common.mak
+ FF_EXTRALIBS := $(FFEXTRALIBS)
+ FF_DEP_LIBS  := $(DEP_LIBS)
  
- AVPROGS-$(CONFIG_FFMPEG)   += ffmpeg
- AVPROGS-$(CONFIG_FFPLAY)   += ffplay
-+AVPROGS-$(CONFIG_FFMPEG)   += lufscalc
- AVPROGS-$(CONFIG_FFPROBE)  += ffprobe
- AVPROGS-$(CONFIG_FFSERVER) += ffserver
+-all: $(AVPROGS)
++all: $(AVPROGS) lufscalc
  
-@@ -21,7 +22,7 @@ AVPROGS    := $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
- INSTPROGS   = $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
- PROGS      += $(AVPROGS)
+ $(TOOLS): %$(EXESUF): %.o $(EXEOBJS)
+ 	$(LD) $(LDFLAGS) $(LDEXEFLAGS) $(LD_O) $^ $(ELIBS)
+@@ -110,14 +110,17 @@ $(1)$(PROGSSUF)_g$(EXESUF): FF_EXTRALIBS += $(LIBS-$(1))
+ -include $$(OBJS-$(1):.o=.d)
+ endef
  
--AVBASENAMES  = ffmpeg ffplay ffprobe ffserver
-+AVBASENAMES  = ffmpeg ffplay ffprobe ffserver lufscalc
- ALLAVPROGS   = $(AVBASENAMES:%=%$(PROGSSUF)$(EXESUF))
- ALLAVPROGS_G = $(AVBASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
+-$(foreach P,$(PROGS),$(eval $(call DOPROG,$(P:$(PROGSSUF)$(EXESUF)=))))
++$(foreach P,$(PROGS) lufscalc,$(eval $(call DOPROG,$(P:$(PROGSSUF)$(EXESUF)=))))
  
-@@ -112,6 +113,9 @@ $(PROGS): %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
+ ffprobe.o cmdutils.o libavcodec/utils.o libavformat/utils.o libavdevice/avdevice.o libavfilter/avfilter.o libavutil/utils.o libpostproc/postprocess.o libswresample/swresample.o libswscale/utils.o : libavutil/ffversion.h
+ 
+-$(PROGS): %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
++$(PROGS) lufscalc: %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
  	$(CP) $< $@
  	$(STRIP) $@
  
@@ -27,5 +29,5 @@ index ca9e511..286e9e0 100644
 +lufscalc_g$(EXESUF): LDFLAGS += bs1770/*.o
 +
  %$(PROGSSUF)_g$(EXESUF): %.o $(FF_DEP_LIBS)
- 	$(LD) $(LDFLAGS) $(LD_O) $(OBJS-$*) $(FF_EXTRALIBS)
+ 	$(LD) $(LDFLAGS) $(LDEXEFLAGS) $(LD_O) $(OBJS-$*) $(FF_EXTRALIBS)
  
