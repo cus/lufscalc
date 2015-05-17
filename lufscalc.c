@@ -96,6 +96,7 @@ typedef struct LufscalcConfig {
     int silent;
     int json;
     int resilient;
+    int track_limit;
     double tplimit;
     char *track_spec;
     double peak_log_limit;
@@ -107,6 +108,7 @@ typedef struct LufscalcConfig {
 static const AVOption lufscalc_config_options[] = {
   { "tracks",       "track specification (2222 means four stereo tracks)",             offsetof(LufscalcConfig, track_spec),     AV_OPT_TYPE_STRING },
   { "logfile",      "set logfile path for peak logging",                               offsetof(LufscalcConfig, logfile),        AV_OPT_TYPE_STRING },
+  { "tracklimit",   "limit the number of input tracks",                                offsetof(LufscalcConfig, track_limit) ,   AV_OPT_TYPE_INT,    { 256 }, 0, 256 },
   { "silent",       "only output the measured loudness and peak seperated by a space", offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "s",            "same as -silent",                                                 offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "json",         "use json output",                                                 offsetof(LufscalcConfig, json),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
@@ -393,7 +395,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     }
 
     for (i = 0; i < ic->nb_streams; i++) {
-        if (ic->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO && sum_channels < channel_limit) {
+        if (ic->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO && sum_channels < channel_limit && nb_audio_streams < conf->track_limit) {
             if (nb_audio_streams >= MAX_STREAMS)
                 panic("cannot handle that many audio streams");
             if (ic->streams[i]->codec->channels <= 0)
@@ -427,14 +429,20 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     while (sum_channels) {
         if (calc.nb_context == BS1770_CTX_CNT)
             panic("not enough bs1770 context");
-        if (track_spec && *track_spec) {
+        if (track_spec) {
+            if (!*track_spec)
+                panic("track spec is not enough for sum channels");
             calc.nb_channels[calc.nb_context] = *track_spec - '0';
-            if (sum_channels < calc.nb_channels[calc.nb_context])
-                panic("channel count is not enough for track specification");
             track_spec++;
         } else {
-            calc.nb_channels[calc.nb_context] = (sum_channels == 5 || sum_channels == 6 || sum_channels == 1) ? sum_channels : 2;
+            if (calc.nb_context >= nb_audio_streams)
+                panic("detected tracks are not enough for sum channels");
+            if (c[calc.nb_context]->channels == 0)
+                panic("track has 0 channels");
+            calc.nb_channels[calc.nb_context] = c[calc.nb_context]->channels;
         }
+        if (sum_channels < calc.nb_channels[calc.nb_context])
+            panic("channel count is not enough for track specification");
         sum_channels -= calc.nb_channels[calc.nb_context];
         calc.nb_context++;
     }
