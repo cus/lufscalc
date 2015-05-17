@@ -45,6 +45,7 @@
 #define MAX_STREAMS 16
 #define SAMPLE_RATE 48000
 #define BUFSIZE (192000 * 4)
+#define CH_MAX 32
 
 #ifdef __GNUC__
 #define likely(x)       __builtin_expect((x),1)
@@ -70,14 +71,14 @@ typedef struct OutputContext {
     enum AVSampleFormat src_sample_fmt;
     int src_sample_rate;
     int last_channels;
-    double *buffers[SWR_CH_MAX];
+    double *buffers[CH_MAX];
     int buffer_pos;
 } OutputContext;
     
 typedef struct TruePeakContext {
     int initialized;
-    SwrContext *swr_ctx[SWR_CH_MAX];
-    int swr_ctx_initialized[SWR_CH_MAX];
+    SwrContext *swr_ctx[CH_MAX];
+    int swr_ctx_initialized[CH_MAX];
     double *buffers[1];
     double peak;
     double current_peak;
@@ -134,9 +135,9 @@ static void panic(const char *str) {
     exit(1);
 }
 
-static void calc_lufs(double* dblbuf[SWR_CH_MAX], int nb_samples, const int tgt_sample_rate, CalcContext *calc) {
+static void calc_lufs(double* dblbuf[CH_MAX], int nb_samples, const int tgt_sample_rate, CalcContext *calc) {
     int i, j, k = 0;
-    double *dblbuf2[SWR_CH_MAX];
+    double *dblbuf2[CH_MAX];
     for (i=0; i<calc->nb_context; i++) {
         for (j=0; j<calc->nb_channels[i]; j++)
             dblbuf2[j] = dblbuf[k+j];
@@ -158,7 +159,7 @@ static double peak_max(double *buf, int nb_samples, double peak) {
     return peak;
 }
 
-static void calc_peak_context(double* dblbuf[SWR_CH_MAX], int nb_channels, int nb_samples, const int tgt_sample_rate, TruePeakContext *truepeak) {
+static void calc_peak_context(double* dblbuf[CH_MAX], int nb_channels, int nb_samples, const int tgt_sample_rate, TruePeakContext *truepeak) {
     int i;
     int nb_resampled_samples;
     double channel_peak;
@@ -207,7 +208,7 @@ static void calc_peak_context(double* dblbuf[SWR_CH_MAX], int nb_channels, int n
         truepeak->tplimit = truepeak->peak / 2.0;
 }
 
-static void calc_peak(double* dblbuf[SWR_CH_MAX], int nb_samples, const int tgt_sample_rate, CalcContext *calc) {
+static void calc_peak(double* dblbuf[CH_MAX], int nb_samples, const int tgt_sample_rate, CalcContext *calc) {
     int i, k = 0;
     for (i=0; i<calc->nb_context; i++) {
         calc_peak_context(dblbuf + k, calc->nb_channels[i], nb_samples, tgt_sample_rate, &calc->peak[i]);
@@ -222,7 +223,7 @@ static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputCont
     int c_channels;
     int nb_samples;
     int i;
-    double *buffers2[SWR_CH_MAX];
+    double *buffers2[CH_MAX];
     
     c_channel_layout = (c->channel_layout && c->channels == av_get_channel_layout_nb_channels(c->channel_layout)) ? c->channel_layout : av_get_default_channel_layout(c->channels);
     c_channels = av_get_channel_layout_nb_channels(c_channel_layout);
@@ -232,7 +233,7 @@ static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputCont
         out->src_sample_rate = tgt_sample_rate;
         out->src_sample_fmt = tgt_sample_fmt;
         out->last_channels = c_channels;
-        if (c_channels > SWR_CH_MAX)
+        if (c_channels > CH_MAX)
             panic("too large number of channels");
     
         for (i=0;i<c_channels;i++)
@@ -279,7 +280,7 @@ static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], 
         min_nb_samples = FFMIN(min_nb_samples, out[i].buffer_pos);
 
     if (min_nb_samples) {
-        double *bufs[SWR_CH_MAX];
+        double *bufs[CH_MAX];
         k = 0;
         for (i=0; i<nb_audio_streams; i++) {
             for (j=0;j<out[i].last_channels;j++)
@@ -400,7 +401,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                 panic("cannot handle that many audio streams");
             if (ic->streams[i]->codec->channels <= 0)
                 panic("channel count is 0");
-            if (sum_channels + ic->streams[i]->codec->channels >= SWR_CH_MAX)
+            if (sum_channels + ic->streams[i]->codec->channels >= CH_MAX)
                 panic("cannot handle that many audio channels");
             if ((audio_streams[nb_audio_streams] = av_find_best_stream(ic, AVMEDIA_TYPE_AUDIO, i, -1, codec + nb_audio_streams, 0)) < 0)
                 panic("cannot find valid audio stream");
@@ -455,7 +456,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         ret = av_read_frame(ic, &pkt);
         
         if (ret < 0) {
-            if (ret == AVERROR_EOF || url_feof(ic->pb))
+            if (ret == AVERROR_EOF || avio_feof(ic->pb))
                 eof = 1;
             if (ic->pb && ic->pb->error)
                 break;
@@ -542,7 +543,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     }
     for (i = 0; i < nb_audio_streams; i++) {
         swr_free(&out[i].swr_ctx);
-        for (j=0; j<SWR_CH_MAX; j++)
+        for (j=0; j<CH_MAX; j++)
             av_free(out[i].buffers[j]);
     }
 
