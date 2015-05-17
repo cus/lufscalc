@@ -94,6 +94,7 @@ typedef struct CalcContext {
 typedef struct LufscalcConfig {
     const AVClass *class;
     int silent;
+    int json;
     int resilient;
     double tplimit;
     char *track_spec;
@@ -108,6 +109,8 @@ static const AVOption lufscalc_config_options[] = {
   { "logfile",      "set logfile path for peak logging",                               offsetof(LufscalcConfig, logfile),        AV_OPT_TYPE_STRING },
   { "silent",       "only output the measured loudness and peak seperated by a space", offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "s",            "same as -silent",                                                 offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "json",         "use json output",                                                 offsetof(LufscalcConfig, json),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "j",            "same as -json",                                                   offsetof(LufscalcConfig, json),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "resilient",    "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "r",            "same as -resilient",                                              offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "crlf",         "write crlf to the end of logfile lines",                          offsetof(LufscalcConfig, crlf),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
@@ -303,11 +306,15 @@ static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], 
     return min_nb_samples;
 }
 
-static void print_results(int nb_channel, int track, const char *filename, double lufs, double peak, int silent) {
-    if (silent) 
-       fprintf(stdout, "%.1f %.1f\n", lufs, peak);
-    else
-       fprintf(stdout, "%d channel (track %d) LUFS and Peak for %s: %.1f %.1f\n", nb_channel, track, filename, lufs, peak);
+static void print_results(int nb_channel, int track, const char *filename, double lufs, double peak, int silent, int json, int last) {
+    if (json) {
+        fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\"}%s\n", lufs, peak, (last?"":","));
+    } else {
+        if (silent)
+            fprintf(stdout, "%.1f %.1f\n", lufs, peak);
+        else
+            fprintf(stdout, "%d channel (track %d) LUFS and Peak for %s: %.1f %.1f\n", nb_channel, track, filename, lufs, peak);
+    }
 }
 
 /*
@@ -494,8 +501,15 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                 av_log(conf, AV_LOG_WARNING, "Buffer #%d is not empty after eof.\n", i);
     
         av_log(conf, AV_LOG_INFO, "Decoding finished.\n");
+        if (conf->json)
+            printf("%s", "[\n");
         for (i=0; i<calc.nb_context; i++)
-            print_results(calc.nb_channels[i], i, filename, bs1770_ctx_track_lufs(calc.bs1770_ctx[i], SAMPLE_RATE, calc.nb_channels[i]), 20*log10(FFMAX(0.00001, calc.peak[i].peak)), conf->silent);
+            print_results(calc.nb_channels[i], i, filename,
+                          bs1770_ctx_track_lufs(calc.bs1770_ctx[i], SAMPLE_RATE, calc.nb_channels[i]),
+                          20*log10(FFMAX(0.00001, calc.peak[i].peak)),
+                          conf->silent, conf->json, i == calc.nb_context - 1);
+        if (conf->json)
+            printf("%s", "]\n");
 
     } else {
         char errbuf[256] = "Unknown error";
