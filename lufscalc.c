@@ -104,6 +104,7 @@ typedef struct LufscalcConfig {
     char *logfile;
     int crlf;
     int speedlimit;
+    int status;
 } LufscalcConfig;
 
 static const AVOption lufscalc_config_options[] = {
@@ -112,6 +113,8 @@ static const AVOption lufscalc_config_options[] = {
   { "tracklimit",   "limit the number of input tracks",                                offsetof(LufscalcConfig, track_limit) ,   AV_OPT_TYPE_INT,    { 256 }, 0, 256 },
   { "silent",       "only output the measured loudness and peak seperated by a space", offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "s",            "same as -silent",                                                 offsetof(LufscalcConfig, silent),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "status",       "print parse progress percent to stderr",                          offsetof(LufscalcConfig, status),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "S",            "same as -status",                                                 offsetof(LufscalcConfig, status),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "json",         "use json output",                                                 offsetof(LufscalcConfig, json),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "j",            "same as -json",                                                   offsetof(LufscalcConfig, json),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "resilient",    "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
@@ -491,15 +494,20 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
         nb_decoded_samples += calc_available_audio_samples(&calc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile, conf->crlf);
 
-        if (conf->speedlimit) {
+        if (conf->speedlimit || conf->status) {
             starttime_diff = av_gettime() - starttime;
             if (starttime_diff < 0 || starttime_diff > 1000000) {
                 starttime = av_gettime();
                 starttime_nb_decoded_samples = nb_decoded_samples;
                 starttime_diff = 1;
+                if (conf->status) {
+                    fprintf(stderr, "%3d %%\r", (ic->duration > 0) ? (int)(nb_decoded_samples * 100 * AV_TIME_BASE / SAMPLE_RATE / ic->duration) : 0);
+                    fflush(stderr);
+                }
             }
-            if (!starttime_diff || (nb_decoded_samples - starttime_nb_decoded_samples) * 1000000 / starttime_diff > conf->speedlimit * SAMPLE_RATE)
-                usleep(40000);
+            if (conf->speedlimit)
+                if (!starttime_diff || (nb_decoded_samples - starttime_nb_decoded_samples) * 1000000 / starttime_diff > conf->speedlimit * SAMPLE_RATE)
+                    usleep(40000);
         }
     }
 
