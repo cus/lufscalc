@@ -1,27 +1,16 @@
 diff --git a/Makefile b/Makefile
-index fd59628..be19b10 100644
+index fd59628..2512c88 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -61,7 +61,7 @@ include $(SRC_PATH)/common.mak
- FF_EXTRALIBS := $(FFEXTRALIBS)
- FF_DEP_LIBS  := $(DEP_LIBS)
+@@ -19,6 +19,7 @@ AVPROGS-$(CONFIG_FFSERVER) += ffserver
  
--all: $(AVPROGS)
-+all: $(AVPROGS) lufscalc
+ AVPROGS    := $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
+ INSTPROGS   = $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
++AVPROGS    += lufscalc$(PROGSSUF)$(EXESUF)
+ PROGS      += $(AVPROGS)
  
- $(TOOLS): %$(EXESUF): %.o $(EXEOBJS)
- 	$(LD) $(LDFLAGS) $(LDEXEFLAGS) $(LD_O) $^ $(ELIBS)
-@@ -110,14 +110,17 @@ $(1)$(PROGSSUF)_g$(EXESUF): FF_EXTRALIBS += $(LIBS-$(1))
- -include $$(OBJS-$(1):.o=.d)
- endef
- 
--$(foreach P,$(PROGS),$(eval $(call DOPROG,$(P:$(PROGSSUF)$(EXESUF)=))))
-+$(foreach P,$(PROGS) lufscalc,$(eval $(call DOPROG,$(P:$(PROGSSUF)$(EXESUF)=))))
- 
- ffprobe.o cmdutils.o libavcodec/utils.o libavformat/utils.o libavdevice/avdevice.o libavfilter/avfilter.o libavutil/utils.o libpostproc/postprocess.o libswresample/swresample.o libswscale/utils.o : libavutil/ffversion.h
- 
--$(PROGS): %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
-+$(PROGS) lufscalc: %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
+ AVBASENAMES  = ffmpeg ffplay ffprobe ffserver
+@@ -118,6 +119,9 @@ $(PROGS): %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
  	$(CP) $< $@
  	$(STRIP) $@
  
