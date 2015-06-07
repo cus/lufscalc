@@ -219,7 +219,7 @@ static void calc_peak(double* dblbuf[CH_MAX], int nb_samples, const int tgt_samp
     }
 }
 
-static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputContext *out) {
+static void output_samples(AVFrame *frame, OutputContext *out) {
     const int tgt_sample_rate = SAMPLE_RATE;
     const enum AVSampleFormat tgt_sample_fmt = AV_SAMPLE_FMT_DBLP;
     int64_t c_channel_layout;
@@ -228,7 +228,7 @@ static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputCont
     int i;
     double *buffers2[CH_MAX];
     
-    c_channel_layout = (c->channel_layout && c->channels == av_get_channel_layout_nb_channels(c->channel_layout)) ? c->channel_layout : av_get_default_channel_layout(c->channels);
+    c_channel_layout = (frame->channel_layout && frame->channels == av_get_channel_layout_nb_channels(frame->channel_layout)) ? frame->channel_layout : av_get_default_channel_layout(frame->channels);
     c_channels = av_get_channel_layout_nb_channels(c_channel_layout);
     
     if (!out->initialized) {
@@ -247,23 +247,23 @@ static void output_samples(AVCodecContext *c, AVFrame *decoded_frame, OutputCont
     if (c_channels != out->last_channels)
         panic("channel number changed");
 
-    if (!out->swr_ctx || c->sample_fmt != out->src_sample_fmt || c->sample_rate != out->src_sample_rate) {
+    if (!out->swr_ctx || frame->format != out->src_sample_fmt || frame->sample_rate != out->src_sample_rate) {
         if (out->swr_ctx)
             swr_free(&out->swr_ctx);
         out->swr_ctx = swr_alloc_set_opts(NULL,
                                          c_channel_layout,  tgt_sample_fmt, tgt_sample_rate,
-                                         c_channel_layout,   c->sample_fmt,  c->sample_rate,
+                                         c_channel_layout,       frame->format,  frame->sample_rate,
                                          0, NULL);
         if (!out->swr_ctx || swr_init(out->swr_ctx) < 0)
             panic("failed to init resampler");
-        out->src_sample_rate = c->sample_rate;
-        out->src_sample_fmt = c->sample_fmt;
+        out->src_sample_rate = frame->sample_rate;
+        out->src_sample_fmt = frame->format;
     }
     
     for (i=0; i<c_channels; i++)
         buffers2[i] = out->buffers[i] + out->buffer_pos;
     nb_samples = swr_convert(out->swr_ctx, (uint8_t**)buffers2, BUFSIZE / av_get_bytes_per_sample(tgt_sample_fmt) - out->buffer_pos,
-                                    (const uint8_t**)decoded_frame->extended_data, decoded_frame->nb_samples);
+                                    (const uint8_t**)frame->extended_data, frame->nb_samples);
     
     if (nb_samples < 0)
         panic("audio_resample() failed");
@@ -481,7 +481,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                         break;
                     }
                     if (got_frame)
-                        output_samples(c[i], decoded_frame, &out[i]);
+                        output_samples(decoded_frame, &out[i]);
                     avpkt.size -= len;
                     avpkt.data += len;
                     avpkt.dts =
