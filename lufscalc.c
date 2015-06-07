@@ -70,6 +70,7 @@ typedef struct OutputContext {
     SwrContext *swr_ctx;
     enum AVSampleFormat src_sample_fmt;
     int src_sample_rate;
+    int src_channels;
     int last_channels;
     double *buffers[CH_MAX];
     int buffer_pos;
@@ -105,6 +106,7 @@ typedef struct LufscalcConfig {
     int crlf;
     int speedlimit;
     int status;
+    int downmix;
 } LufscalcConfig;
 
 static const AVOption lufscalc_config_options[] = {
@@ -117,6 +119,8 @@ static const AVOption lufscalc_config_options[] = {
   { "S",            "same as -status",                                                 offsetof(LufscalcConfig, status),         AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "json",         "use json output",                                                 offsetof(LufscalcConfig, json),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "j",            "same as -json",                                                   offsetof(LufscalcConfig, json),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "downmix",      "downmix input audio streams to this number of channels",          offsetof(LufscalcConfig, downmix),        AV_OPT_TYPE_INT,    { 0 },   0, 6 },
+  { "d",            "same as -downmix",                                                offsetof(LufscalcConfig, downmix),        AV_OPT_TYPE_INT,    { 0 },   0, 6 },
   { "resilient",    "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "r",            "same as -resilient",                                              offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "crlf",         "write crlf to the end of logfile lines",                          offsetof(LufscalcConfig, crlf),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
@@ -219,48 +223,56 @@ static void calc_peak(double* dblbuf[CH_MAX], int nb_samples, const int tgt_samp
     }
 }
 
-static void output_samples(AVFrame *frame, OutputContext *out) {
+static void output_samples(AVFrame *frame, OutputContext *out, int downmix) {
     const int tgt_sample_rate = SAMPLE_RATE;
     const enum AVSampleFormat tgt_sample_fmt = AV_SAMPLE_FMT_DBLP;
+    int64_t tgt_channel_layout;
+    int tgt_channels;
     int64_t c_channel_layout;
-    int c_channels;
     int nb_samples;
     int i;
     double *buffers2[CH_MAX];
     
     c_channel_layout = (frame->channel_layout && frame->channels == av_get_channel_layout_nb_channels(frame->channel_layout)) ? frame->channel_layout : av_get_default_channel_layout(frame->channels);
-    c_channels = av_get_channel_layout_nb_channels(c_channel_layout);
+
+    if (downmix)
+        tgt_channel_layout = av_get_default_channel_layout(downmix);
+    else
+        tgt_channel_layout = c_channel_layout;
+    tgt_channels = av_get_channel_layout_nb_channels(tgt_channel_layout);
     
     if (!out->initialized) {
         out->initialized = 1;
         out->src_sample_rate = tgt_sample_rate;
         out->src_sample_fmt = tgt_sample_fmt;
-        out->last_channels = c_channels;
-        if (c_channels > CH_MAX)
+        out->src_channels = tgt_channels;
+        out->last_channels = tgt_channels;
+        if (tgt_channels > CH_MAX)
             panic("too large number of channels");
     
-        for (i=0;i<c_channels;i++)
+        for (i=0;i<tgt_channels;i++)
             if (!(out->buffers[i] = av_malloc(BUFSIZE)))
                 panic("malloc error");
     }
 
-    if (c_channels != out->last_channels)
+    if (tgt_channels != out->last_channels)
         panic("channel number changed");
 
-    if (!out->swr_ctx || frame->format != out->src_sample_fmt || frame->sample_rate != out->src_sample_rate) {
+    if (!out->swr_ctx || frame->format != out->src_sample_fmt || frame->sample_rate != out->src_sample_rate || frame->channels != out->src_channels) {
         if (out->swr_ctx)
             swr_free(&out->swr_ctx);
         out->swr_ctx = swr_alloc_set_opts(NULL,
-                                         c_channel_layout,  tgt_sample_fmt, tgt_sample_rate,
+                                         tgt_channel_layout,     tgt_sample_fmt, tgt_sample_rate,
                                          c_channel_layout,       frame->format,  frame->sample_rate,
                                          0, NULL);
         if (!out->swr_ctx || swr_init(out->swr_ctx) < 0)
             panic("failed to init resampler");
         out->src_sample_rate = frame->sample_rate;
         out->src_sample_fmt = frame->format;
+        out->src_channels = frame->channels;
     }
     
-    for (i=0; i<c_channels; i++)
+    for (i=0; i<tgt_channels; i++)
         buffers2[i] = out->buffers[i] + out->buffer_pos;
     nb_samples = swr_convert(out->swr_ctx, (uint8_t**)buffers2, BUFSIZE / av_get_bytes_per_sample(tgt_sample_fmt) - out->buffer_pos,
                                     (const uint8_t**)frame->extended_data, frame->nb_samples);
@@ -410,7 +422,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                 panic("cannot find valid audio stream");
             ic->streams[i]->discard = AVDISCARD_DEFAULT;
             nb_audio_streams++;
-            sum_channels += ic->streams[i]->codec->channels;
+            sum_channels += (conf->downmix ? conf->downmix : ic->streams[i]->codec->channels);
         } else {
             ic->streams[i]->discard = AVDISCARD_ALL;
         }
@@ -443,7 +455,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                 panic("detected tracks are not enough for sum channels");
             if (c[calc.nb_context]->channels == 0)
                 panic("track has 0 channels");
-            calc.nb_channels[calc.nb_context] = c[calc.nb_context]->channels;
+            calc.nb_channels[calc.nb_context] = (conf->downmix ? conf->downmix : c[calc.nb_context]->channels);
         }
         if (sum_channels < calc.nb_channels[calc.nb_context])
             panic("channel count is not enough for track specification");
@@ -481,7 +493,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                         break;
                     }
                     if (got_frame)
-                        output_samples(decoded_frame, &out[i]);
+                        output_samples(decoded_frame, &out[i], conf->downmix);
                     avpkt.size -= len;
                     avpkt.data += len;
                     avpkt.dts =
