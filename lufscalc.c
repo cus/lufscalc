@@ -34,7 +34,7 @@
 #include "libavformat/avformat.h"
 #include "libswresample/swresample.h"
 
-#include "bs1770_ctx.h"
+#include "bs1770/bs1770_ctx.h"
 #define GATE      (-10.0)
 #define BLOCK     400.0
 #define PARTITION 4
