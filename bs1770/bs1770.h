@@ -129,6 +129,7 @@ typedef struct bs1770 {
 
 bs1770_t *bs1770_init(bs1770_t *bs1770, bs1770_stats_t *track);
 bs1770_t *bs1770_cleanup(bs1770_t *bs1770);
+void bs1770_close(bs1770_t *bs1770);
 
 void bs1770_set_fs(bs1770_t *bs1770, double fs, int channels);
 void bs1770_add_sample(bs1770_t *bs1770, double fs, int channels,

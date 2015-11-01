@@ -26,7 +26,7 @@
 #undef NDEBUG /* Must undef above assert.h or other that might include it. */
 #endif
 
-#include <strings.h>
+#include <string.h>
 #include <assert.h>
 #include <math.h>
 #include "bs1770.h"
