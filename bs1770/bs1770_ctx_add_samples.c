@@ -1,5 +1,5 @@
 /*
- * bs1770_stats.c
+ * bs1770_ctx_add_samples.c
  * Copyright (C) 2011, 2012 Peter Belkner <pbelkner@snafu.de>
  * 
  * This library is free software; you can redistribute it and/or
@@ -17,33 +17,27 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
  * MA  02110-1301  USA
  */
-#include <string.h>
 #include "bs1770.h"
+#include "bs1770_types.h"
 
-bs1770_stats_t *bs1770_stats_init(bs1770_stats_t *stats, bs1770_hist_t *album,
-    const bs1770_ps_t *ps)
+#if defined (PLANAR)
+void FN(bs1770_ctx_add_samples)(bs1770_ctx_t *ctx, size_t i, double fs,
+    int channels, TP samples, size_t nsamples)
 {
-  memset(stats,0,sizeof *stats);
-  stats->album=album;
-
-  if (NULL==bs1770_hist_init(&stats->track,ps))
-	goto error;
-  else if (NULL==bs1770_aggr_init(&stats->aggr,ps,&stats->track,album))
-	goto error;
-
-  stats->active=1;
-
-  return stats;
-error:
-  bs1770_stats_cleanup(stats);
-
-  return NULL;
+  FN(bs1770_add_samples)(&ctx->nodes[i].bs1770,fs,channels,samples,
+      nsamples);
 }
-
-bs1770_stats_t *bs1770_stats_cleanup(bs1770_stats_t *stats)
+#elif defined (INTERLEAVED)
+void FN(bs1770_ctx_add_samples)(bs1770_ctx_t *ctx, size_t i, double fs,
+    int channels, TP *samples, size_t nsamples)
 {
-  bs1770_aggr_cleanup(&stats->aggr);
-  bs1770_hist_cleanup(&stats->track);
-
-  return stats;
+  FN(bs1770_add_samples)(&ctx->nodes[i].bs1770,fs,channels,samples,
+      nsamples);
 }
+#else
+void FN(bs1770_ctx_add_sample)(bs1770_ctx_t *ctx, size_t i, double fs,
+    int channels, TP sample)
+{
+  FN(bs1770_add_sample)(&ctx->nodes[i].bs1770,fs,channels,sample);
+}
+#endif

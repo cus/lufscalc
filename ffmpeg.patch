@@ -1,8 +1,8 @@
 diff --git a/Makefile b/Makefile
-index 306f060..7a4aae6 100644
+index e484249..9dc8203 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -19,6 +19,7 @@ AVPROGS-$(CONFIG_FFSERVER) += ffserver
+@@ -20,6 +20,7 @@ AVPROGS-$(CONFIG_FFSERVER) += ffserver
  
  AVPROGS    := $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
  INSTPROGS   = $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
@@ -10,12 +10,12 @@ index 306f060..7a4aae6 100644
  PROGS      += $(AVPROGS)
  
  AVBASENAMES  = ffmpeg ffplay ffprobe ffserver
-@@ -123,6 +124,10 @@ $(PROGS): %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
+@@ -124,6 +125,10 @@ $(PROGS): %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
  	$(CP) $< $@
  	$(STRIP) $@
  
-+lufscalc.o: bs1770/biquad.o bs1770/bs1770_ctx.o bs1770/bs1770_stats.o bs1770/bs1770_stats_h.o bs1770/bs1770_stats_s.o bs1770/bs1770.o
-+lufscalc.o: CFLAGS += -DFFMPEG_STATIC_BUILD
++lufscalc.o: bs1770/biquad.o bs1770/bs1770_a85.o bs1770/bs1770_add_samples.o bs1770/bs1770_aggr.o bs1770/bs1770.o bs1770/bs1770_ctx_add_samples.o bs1770/bs1770_ctx.o bs1770/bs1770_default.o bs1770/bs1770_hist.o bs1770/bs1770_nd_add_samples.o bs1770/bs1770_nd.o bs1770/bs1770_r128.o bs1770/bs1770_stats.o bs1770/bs1770_add_sample.o
++lufscalc.o: CFLAGS += -DFFMPEG_STATIC_BUILD -DPLANAR -Df64
 +lufscalc_g$(EXESUF): LDFLAGS += bs1770/*.o
 +
  %$(PROGSSUF)_g$(EXESUF): %.o $(FF_DEP_LIBS)

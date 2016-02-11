@@ -35,9 +35,6 @@
 #include "libswresample/swresample.h"
 
 #include "bs1770/bs1770_ctx.h"
-#define GATE      (-10.0)
-#define BLOCK     400.0
-#define PARTITION 4
 #define REFERENCE   (-70.0)
 #define MODE        BS1770_MODE_H
 
@@ -152,8 +149,7 @@ static void calc_lufs(double* dblbuf[CH_MAX], int nb_samples, const int tgt_samp
             dblbuf2[3] = dblbuf2[4];
             dblbuf2[4] = dblbuf2[5];
         }
-        for (j=0; j < nb_samples; j++)
-            bs1770_ctx_add_sample(calc->bs1770_ctx[i], tgt_sample_rate, calc->nb_channels[i], dblbuf2, j);
+        bs1770_ctx_add_samples_p_f64(calc->bs1770_ctx[i], 0, tgt_sample_rate, calc->nb_channels[i], dblbuf2, nb_samples);
         k += calc->nb_channels[i];
     }
 }
@@ -376,7 +372,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     memset(&out, 0, MAX_STREAMS * sizeof(OutputContext));
     memset(&calc, 0, sizeof(calc));
     for (i = 0; i < BS1770_CTX_CNT; i++) {
-        calc.bs1770_ctx[i] = bs1770_ctx_open(MODE,GATE,BLOCK,PARTITION,REFERENCE);
+        calc.bs1770_ctx[i] = bs1770_ctx_open(1, bs1770_lufs_ps_default(), NULL);
         calc.peak[i].tplimit = pow(10, -fabs(conf->tplimit) / 20.0);
         calc.peak[i].peak = 0.0;
         if (!calc.bs1770_ctx[i])
@@ -532,11 +528,13 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         av_log(conf, AV_LOG_INFO, "Decoding finished.\n");
         if (conf->json)
             printf("%s", "[\n");
-        for (i=0; i<calc.nb_context; i++)
+        for (i=0; i<calc.nb_context; i++) {
+            double lufs = bs1770_ctx_track_lufs_r128(calc.bs1770_ctx[i],0);
             print_results(calc.nb_channels[i], i, filename,
-                          bs1770_ctx_track_lufs(calc.bs1770_ctx[i], SAMPLE_RATE, calc.nb_channels[i]),
+                          lufs,
                           20*log10(FFMAX(0.00001, calc.peak[i].peak)),
                           conf->silent, conf->json, i == calc.nb_context - 1);
+        }
         if (conf->json)
             printf("%s", "]\n");
 
