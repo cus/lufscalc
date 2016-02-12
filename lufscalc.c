@@ -104,6 +104,7 @@ typedef struct LufscalcConfig {
     int speedlimit;
     int status;
     int downmix;
+    int lra;
 } LufscalcConfig;
 
 static const AVOption lufscalc_config_options[] = {
@@ -118,6 +119,7 @@ static const AVOption lufscalc_config_options[] = {
   { "j",            "same as -json",                                                   offsetof(LufscalcConfig, json),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "downmix",      "downmix input audio streams to this number of channels",          offsetof(LufscalcConfig, downmix),        AV_OPT_TYPE_INT,    { 0 },   0, 6 },
   { "d",            "same as -downmix",                                                offsetof(LufscalcConfig, downmix),        AV_OPT_TYPE_INT,    { 0 },   0, 6 },
+  { "lra",          "calculate loudenss range",                                        offsetof(LufscalcConfig, lra),            AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "resilient",    "continue file processing on decoding errors",                     offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "r",            "same as -resilient",                                              offsetof(LufscalcConfig, resilient),      AV_OPT_TYPE_INT,    { 0 },   0, 1 },
   { "crlf",         "write crlf to the end of logfile lines",                          offsetof(LufscalcConfig, crlf),           AV_OPT_TYPE_INT,    { 0 },   0, 1 },
@@ -320,14 +322,25 @@ static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], 
     return min_nb_samples;
 }
 
-static void print_results(int nb_channel, int track, const char *filename, double lufs, double peak, int silent, int json, int last) {
+static void print_results(int nb_channel, int track, const char *filename, double lufs, double lra, double peak, int silent, int json, int last) {
     if (json) {
-        fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\"}%s\n", lufs, peak, (last?"":","));
+        if (lra >= 0) {
+            fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\", \"lra\":\"%.1f\"}%s\n", lufs, peak, lra, (last?"":","));
+        } else {
+            fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\"}%s\n", lufs, peak, (last?"":","));
+        }
     } else {
-        if (silent)
-            fprintf(stdout, "%.1f %.1f\n", lufs, peak);
-        else
-            fprintf(stdout, "%d channel (track %d) LUFS and Peak for %s: %.1f %.1f\n", nb_channel, track, filename, lufs, peak);
+        if (lra >= 0) {
+            if (silent)
+                fprintf(stdout, "%.1f %.1f %.1f\n", lufs, peak, lra);
+            else
+                fprintf(stdout, "%d channel (track %d) LUFS, Peak and LRA for %s: %.1f %.1f %.1f\n", nb_channel, track, filename, lufs, peak, lra);
+        } else {
+            if (silent)
+                fprintf(stdout, "%.1f %.1f\n", lufs, peak);
+            else
+                fprintf(stdout, "%d channel (track %d) LUFS and Peak for %s: %.1f %.1f\n", nb_channel, track, filename, lufs, peak);
+        }
     }
 }
 
@@ -372,7 +385,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     memset(&out, 0, MAX_STREAMS * sizeof(OutputContext));
     memset(&calc, 0, sizeof(calc));
     for (i = 0; i < BS1770_CTX_CNT; i++) {
-        calc.bs1770_ctx[i] = bs1770_ctx_open(1, bs1770_lufs_ps_default(), NULL);
+        calc.bs1770_ctx[i] =  bs1770_ctx_open(1, bs1770_lufs_ps_default(), conf->lra ? bs1770_lra_ps_default() : NULL);
         calc.peak[i].tplimit = pow(10, -fabs(conf->tplimit) / 20.0);
         calc.peak[i].peak = 0.0;
         if (!calc.bs1770_ctx[i])
@@ -530,8 +543,10 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
             printf("%s", "[\n");
         for (i=0; i<calc.nb_context; i++) {
             double lufs = bs1770_ctx_track_lufs_r128(calc.bs1770_ctx[i],0);
+            double lra = conf->lra ? bs1770_ctx_track_lra_default(calc.bs1770_ctx[i],0) : -1;
+
             print_results(calc.nb_channels[i], i, filename,
-                          lufs,
+                          lufs, lra,
                           20*log10(FFMAX(0.00001, calc.peak[i].peak)),
                           conf->silent, conf->json, i == calc.nb_context - 1);
         }
