@@ -369,6 +369,8 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     double peak_log_limit = pow(10, conf->peak_log_limit / 20.0);
     int64_t starttime, starttime_diff;
     int64_t starttime_nb_decoded_samples = 0;
+    int codec_index = 0;
+    int remaining_codec_channels = 0;
     FILE *logfile = NULL;
 
     if (conf->logfile)
@@ -451,6 +453,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     }
 
     sum_channels = FFMIN(sum_channels, channel_limit);
+    remaining_codec_channels = 0;
     while (sum_channels) {
         if (calc.nb_context == BS1770_CTX_CNT)
             panic("not enough bs1770 context");
@@ -460,11 +463,18 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
             calc.nb_channels[calc.nb_context] = *track_spec - '0';
             track_spec++;
         } else {
-            if (calc.nb_context >= nb_audio_streams)
-                panic("detected tracks are not enough for sum channels");
-            if (c[calc.nb_context]->channels == 0)
+            if (c[codec_index]->channels == 0)
                 panic("track has 0 channels");
-            calc.nb_channels[calc.nb_context] = (conf->downmix ? conf->downmix : c[calc.nb_context]->channels);
+            if (conf->downmix) {
+                calc.nb_channels[calc.nb_context] = conf->downmix;
+            } else {
+                if (remaining_codec_channels == 0)
+                    remaining_codec_channels = c[codec_index]->channels;
+                calc.nb_channels[calc.nb_context] = FFMIN(6, remaining_codec_channels);
+                remaining_codec_channels -= calc.nb_channels[calc.nb_context];
+                if (!remaining_codec_channels)
+                    codec_index++;
+            }
         }
         if (sum_channels < calc.nb_channels[calc.nb_context])
             panic("channel count is not enough for track specification");
@@ -647,6 +657,8 @@ int main(int argc, char **argv)
                 continue;
             }
         }
+        if (conf.downmix && conf.track_spec)
+            panic("downmix and track_spec are mutually exclusive");
         filecount++;
         ret = lufscalc_file(argv[0], &conf);
     }
