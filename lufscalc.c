@@ -87,6 +87,8 @@ typedef struct CalcContext {
     bs1770_ctx_t *bs1770_ctx[BS1770_CTX_CNT];
     int nb_channels[BS1770_CTX_CNT];
     TruePeakContext peak[BS1770_CTX_CNT];
+    double lufs[BS1770_CTX_CNT];
+    double lra[BS1770_CTX_CNT];
     int nb_context;
 } CalcContext;
 
@@ -322,7 +324,7 @@ static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], 
     return min_nb_samples;
 }
 
-static void print_results(int nb_channel, int track, const char *filename, double lufs, double lra, double peak, int silent, int json, int last) {
+static void print_calc_results(int nb_channel, int track, const char *filename, double lufs, double lra, double peak, int silent, int json, int last) {
     if (json) {
         if (lra >= 0) {
             fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\", \"lra\":\"%.1f\"}%s\n", lufs, peak, lra, (last?"":","));
@@ -342,6 +344,20 @@ static void print_results(int nb_channel, int track, const char *filename, doubl
                 fprintf(stdout, "%d channel (track %d) LUFS and Peak for %s: %.1f %.1f\n", nb_channel, track, filename, lufs, peak);
         }
     }
+}
+
+static void print_results(const char *filename, LufscalcConfig *conf, CalcContext *calc) {
+    int i;
+    if (conf->json)
+        printf("%s", "[\n");
+    for (i=0; i<calc->nb_context; i++) {
+        print_calc_results(calc->nb_channels[i], i, filename,
+                           calc->lufs[i], calc->lra[i],
+                           20*log10(FFMAX(0.00001, calc->peak[i].peak)),
+                           conf->silent, conf->json, i == calc->nb_context - 1);
+    }
+    if (conf->json)
+        printf("%s", "]\n");
 }
 
 /*
@@ -543,26 +559,17 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     }
 
     if (eof) {
-
         for (i=0; i<nb_audio_streams; i++)
             if (out[i].buffer_pos)
                 av_log(conf, AV_LOG_WARNING, "Buffer #%d is not empty after eof.\n", i);
-    
         av_log(conf, AV_LOG_INFO, "Decoding finished.\n");
-        if (conf->json)
-            printf("%s", "[\n");
+
         for (i=0; i<calc.nb_context; i++) {
-            double lufs = bs1770_ctx_track_lufs_r128(calc.bs1770_ctx[i],0);
-            double lra = conf->lra ? bs1770_ctx_track_lra_default(calc.bs1770_ctx[i],0) : -1;
-
-            print_results(calc.nb_channels[i], i, filename,
-                          lufs, lra,
-                          20*log10(FFMAX(0.00001, calc.peak[i].peak)),
-                          conf->silent, conf->json, i == calc.nb_context - 1);
+            calc.lufs[i] = bs1770_ctx_track_lufs_r128(calc.bs1770_ctx[i],0);
+            calc.lra[i] = conf->lra ? bs1770_ctx_track_lra_default(calc.bs1770_ctx[i],0) : -1;
         }
-        if (conf->json)
-            printf("%s", "]\n");
 
+        print_results(filename, conf, &calc);
     } else {
         char errbuf[256] = "Unknown error";
         av_strerror(ret, errbuf, sizeof(errbuf));
