@@ -402,13 +402,6 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     av_init_packet(&pkt);
     memset(&out, 0, MAX_STREAMS * sizeof(OutputContext));
     memset(&calc, 0, sizeof(calc));
-    for (i = 0; i < BS1770_CTX_CNT; i++) {
-        calc.bs1770_ctx[i] =  bs1770_ctx_open(1, bs1770_lufs_ps_default(), conf->lra ? bs1770_lra_ps_default() : NULL);
-        calc.peak[i].tplimit = pow(10, -fabs(conf->tplimit) / 20.0);
-        calc.peak[i].peak = 0.0;
-        if (!calc.bs1770_ctx[i])
-            panic("failed to initialize bs1770 context");
-    }
     if (!(decoded_frame = av_frame_alloc()))
         panic("out of memory allocating the frame");
 
@@ -501,6 +494,14 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     if (track_spec && *track_spec)
         panic("channel count is not enough for track specification");
 
+    for (i = 0; i < calc.nb_context; i++) {
+        calc.bs1770_ctx[i] = bs1770_ctx_open(1, bs1770_lufs_ps_default(), conf->lra ? bs1770_lra_ps_default() : NULL);
+        calc.peak[i].tplimit = pow(10, -fabs(conf->tplimit) / 20.0);
+        calc.peak[i].peak = 0.0;
+        if (!calc.bs1770_ctx[i])
+            panic("failed to initialize bs1770 context");
+    }
+
     starttime = av_gettime();
     while (ret == 0) {
         ret = av_read_frame(ic, &pkt);
@@ -584,7 +585,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     avformat_close_input(&ic);
     av_free(decoded_frame);
 
-    for (i = 0; i < BS1770_CTX_CNT; i++)
+    for (i = 0; i < calc.nb_context; i++)
         bs1770_ctx_close(calc.bs1770_ctx[i]);
     for (i = 0; i < calc.nb_context; i++) {
         av_free(calc.peak[i].buffers[0]);
