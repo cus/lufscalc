@@ -38,8 +38,7 @@
 #define REFERENCE   (-70.0)
 #define MODE        BS1770_MODE_H
 
-#define BS1770_CTX_CNT 32
-#define MAX_STREAMS 16
+#define MAX_STREAMS 32
 #define SAMPLE_RATE 48000
 #define BUFSIZE (192000 * 4)
 #define CH_MAX 32
@@ -83,17 +82,13 @@ typedef struct TruePeakContext {
     double tplimit;
 } TruePeakContext;
 
-typedef struct LoudnessContext {
+typedef struct CalcContext {
     bs1770_ctx_t *bs1770_ctx;
     int nb_channels;
     TruePeakContext peak;
     double lufs;
     double lra;
-} LoudnessContext;
-
-typedef struct CalcContext {
-    int nb_context;
-    LoudnessContext ctx[BS1770_CTX_CNT];
+    struct CalcContext *next;
 } CalcContext;
 
 typedef struct LufscalcConfig {
@@ -148,17 +143,17 @@ static void panic(const char *str) {
 }
 
 static void calc_lufs(double* dblbuf[CH_MAX], int nb_samples, const int tgt_sample_rate, CalcContext *calc) {
-    int i, j, k = 0;
+    int j, k = 0;
     double *dblbuf2[CH_MAX];
-    for (i=0; i<calc->nb_context; i++) {
-        for (j=0; j<calc->ctx[i].nb_channels; j++)
+    for (; calc; calc = calc->next) {
+        for (j=0; j<calc->nb_channels; j++)
             dblbuf2[j] = dblbuf[k+j];
-        if (calc->ctx[i].nb_channels == 6) {
+        if (calc->nb_channels == 6) {
             dblbuf2[3] = dblbuf2[4];
             dblbuf2[4] = dblbuf2[5];
         }
-        bs1770_ctx_add_samples_p_f64(calc->ctx[i].bs1770_ctx, 0, tgt_sample_rate, calc->ctx[i].nb_channels, dblbuf2, nb_samples);
-        k += calc->ctx[i].nb_channels;
+        bs1770_ctx_add_samples_p_f64(calc->bs1770_ctx, 0, tgt_sample_rate, calc->nb_channels, dblbuf2, nb_samples);
+        k += calc->nb_channels;
     }
 }
 
@@ -220,10 +215,10 @@ static void calc_peak_context(double* dblbuf[CH_MAX], int nb_channels, int nb_sa
 }
 
 static void calc_peak(double* dblbuf[CH_MAX], int nb_samples, const int tgt_sample_rate, CalcContext *calc) {
-    int i, k = 0;
-    for (i=0; i<calc->nb_context; i++) {
-        calc_peak_context(dblbuf + k, calc->ctx[i].nb_channels, nb_samples, tgt_sample_rate, &calc->ctx[i].peak);
-        k += calc->ctx[i].nb_channels;
+    int k = 0;
+    for (; calc; calc = calc->next) {
+        calc_peak_context(dblbuf + k, calc->nb_channels, nb_samples, tgt_sample_rate, &calc->peak);
+        k += calc->nb_channels;
     }
 }
 
@@ -310,14 +305,14 @@ static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], 
         calc_lufs(bufs, min_nb_samples, SAMPLE_RATE, calc);
         calc_peak(bufs, min_nb_samples, SAMPLE_RATE, calc);
 
-        for (i=0; i<calc->nb_context; i++)
-            if (peak_log_limit <= calc->ctx[i].peak.current_peak)
+        for (i=0; calc; calc = calc->next, i++)
+            if (peak_log_limit <= calc->peak.current_peak)
                 fprintf(logfile, "%d %02d:%02d:%02d:%02d %.1f%s\n", i,
                                                           (int)(nb_decoded_samples / SAMPLE_RATE / 60 / 60),
                                                           (int)(nb_decoded_samples / SAMPLE_RATE / 60 % 60),
                                                           (int)(nb_decoded_samples / SAMPLE_RATE % 60),
                                                           (int)(nb_decoded_samples * 25 / SAMPLE_RATE % 25),
-                                                          20 * log10(calc->ctx[i].peak.current_peak),
+                                                          20 * log10(calc->peak.current_peak),
                                                           crlf ? "\r" : "");
         for (i=0; i<nb_audio_streams; i++)
             if (out[i].buffer_pos)
@@ -354,11 +349,11 @@ static void print_results(const char *filename, LufscalcConfig *conf, CalcContex
     int i;
     if (conf->json)
         printf("%s", "[\n");
-    for (i=0; i<calc->nb_context; i++) {
-        print_calc_results(calc->ctx[i].nb_channels, i, filename,
-                           calc->ctx[i].lufs, calc->ctx[i].lra,
-                           20*log10(FFMAX(0.00001, calc->ctx[i].peak.peak)),
-                           conf->silent, conf->json, i == calc->nb_context - 1);
+    for (i=0; calc; calc = calc->next, i++) {
+        print_calc_results(calc->nb_channels, i, filename,
+                           calc->lufs, calc->lra,
+                           20*log10(FFMAX(0.00001, calc->peak.peak)),
+                           conf->silent, conf->json, !calc->next);
     }
     if (conf->json)
         printf("%s", "]\n");
@@ -380,7 +375,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     char codecname[256];
     int nb_audio_streams = 0;
     int audio_streams[MAX_STREAMS];
-    CalcContext calc;
+    CalcContext *calc = NULL, *rootcalc = NULL;
     int sum_channels = 0;
     int channel_limit = 256;
     char *track_spec_temp;
@@ -405,7 +400,6 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
     av_init_packet(&pkt);
     memset(&out, 0, MAX_STREAMS * sizeof(OutputContext));
-    memset(&calc, 0, sizeof(calc));
     if (!(decoded_frame = av_frame_alloc()))
         panic("out of memory allocating the frame");
 
@@ -468,41 +462,48 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     sum_channels = FFMIN(sum_channels, channel_limit);
     remaining_codec_channels = 0;
     while (sum_channels) {
-        if (calc.nb_context == BS1770_CTX_CNT)
-            panic("not enough bs1770 context");
+        int channels = 0;
+        CalcContext *newcalc;
         if (track_spec) {
             if (!*track_spec)
                 panic("track spec is not enough for sum channels");
-            calc.ctx[calc.nb_context].nb_channels = *track_spec - '0';
+            channels = *track_spec - '0';
             track_spec++;
         } else {
             if (c[codec_index]->channels == 0)
                 panic("track has 0 channels");
             if (conf->downmix) {
-                calc.ctx[calc.nb_context].nb_channels = conf->downmix;
+                channels = conf->downmix;
             } else {
                 if (remaining_codec_channels == 0)
                     remaining_codec_channels = c[codec_index]->channels;
-                calc.ctx[calc.nb_context].nb_channels = FFMIN(6, remaining_codec_channels);
-                remaining_codec_channels -= calc.ctx[calc.nb_context].nb_channels;
+                channels = FFMIN(6, remaining_codec_channels);
+                remaining_codec_channels -= channels;
                 if (!remaining_codec_channels)
                     codec_index++;
             }
         }
-        if (sum_channels < calc.ctx[calc.nb_context].nb_channels)
+        if (sum_channels < channels)
             panic("channel count is not enough for track specification");
-        sum_channels -= calc.ctx[calc.nb_context].nb_channels;
-        calc.nb_context++;
+        sum_channels -= channels;
+        newcalc = av_mallocz(sizeof(CalcContext));
+        if (!newcalc)
+            panic("cannot alloc calc context");
+        newcalc->nb_channels = channels;
+        if (!rootcalc)
+            calc = rootcalc = newcalc;
+        else
+            calc->next = newcalc, calc = newcalc;
     }
 
     if (track_spec && *track_spec)
         panic("channel count is not enough for track specification");
 
-    for (i = 0; i < calc.nb_context; i++) {
-        calc.ctx[i].bs1770_ctx = bs1770_ctx_open(1, bs1770_lufs_ps_default(), conf->lra ? bs1770_lra_ps_default() : NULL);
-        calc.ctx[i].peak.tplimit = pow(10, -fabs(conf->tplimit) / 20.0);
-        calc.ctx[i].peak.peak = 0.0;
-        if (!calc.ctx[i].bs1770_ctx)
+    for (calc = rootcalc; calc; calc = calc->next) {
+        calc->bs1770_ctx = bs1770_ctx_open(1, bs1770_lufs_ps_default(), conf->lra ? bs1770_lra_ps_default() : NULL);
+        calc->peak.tplimit = pow(10, -fabs(conf->tplimit) / 20.0);
+        calc->peak.peak = 0.0;
+        if (!calc->bs1770_ctx)
             panic("failed to initialize bs1770 context");
     }
 
@@ -544,7 +545,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
         av_free_packet(&pkt);
 
-        nb_decoded_samples += calc_available_audio_samples(&calc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile, conf->crlf);
+        nb_decoded_samples += calc_available_audio_samples(rootcalc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile, conf->crlf);
 
         if (conf->speedlimit || conf->status) {
             starttime_diff = av_gettime() - starttime;
@@ -569,12 +570,12 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                 av_log(conf, AV_LOG_WARNING, "Buffer #%d is not empty after eof.\n", i);
         av_log(conf, AV_LOG_INFO, "Decoding finished.\n");
 
-        for (i=0; i<calc.nb_context; i++) {
-            calc.ctx[i].lufs = bs1770_ctx_track_lufs_r128(calc.ctx[i].bs1770_ctx,0);
-            calc.ctx[i].lra = conf->lra ? bs1770_ctx_track_lra_default(calc.ctx[i].bs1770_ctx,0) : -1;
+        for (calc = rootcalc; calc; calc = calc->next) {
+            calc->lufs = bs1770_ctx_track_lufs_r128(calc->bs1770_ctx,0);
+            calc->lra = conf->lra ? bs1770_ctx_track_lra_default(calc->bs1770_ctx,0) : -1;
         }
 
-        print_results(filename, conf, &calc);
+        print_results(filename, conf, rootcalc);
     } else {
         char errbuf[256] = "Unknown error";
         av_strerror(ret, errbuf, sizeof(errbuf));
@@ -589,11 +590,11 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     avformat_close_input(&ic);
     av_free(decoded_frame);
 
-    for (i = 0; i < calc.nb_context; i++) {
-        bs1770_ctx_close(calc.ctx[i].bs1770_ctx);
-        av_free(calc.ctx[i].peak.buffers[0]);
-        for (j=0; j<calc.ctx[i].nb_channels; j++)
-            swr_free(&calc.ctx[i].peak.swr_ctx[j]);
+    for (calc = rootcalc; calc; calc = calc->next) {
+        bs1770_ctx_close(calc->bs1770_ctx);
+        av_free(calc->peak.buffers[0]);
+        for (j=0; j<calc->nb_channels; j++)
+            swr_free(&calc->peak.swr_ctx[j]);
     }
     for (i = 0; i < nb_audio_streams; i++) {
         swr_free(&out[i].swr_ctx);
