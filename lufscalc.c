@@ -70,6 +70,8 @@ typedef struct OutputContext {
     int last_channels;
     double *buffers[CH_MAX];
     int buffer_pos;
+    int nb_offsets;
+    int64_t *offsets;
 } OutputContext;
     
 typedef struct TruePeakContext {
@@ -88,6 +90,7 @@ typedef struct CalcContext {
     TruePeakContext peak;
     double lufs;
     double lra;
+    double gain;
     struct CalcContext *next;
 } CalcContext;
 
@@ -106,6 +109,9 @@ typedef struct LufscalcConfig {
     int status;
     int downmix;
     int lra;
+    int fix;
+    double fix_target;
+    double max_clip;
 } LufscalcConfig;
 
 static const AVOption lufscalc_config_options[] = {
@@ -127,6 +133,9 @@ static const AVOption lufscalc_config_options[] = {
   { "peakloglimit", "log peaks which are above or equal to the limit",                 offsetof(LufscalcConfig, peak_log_limit), AV_OPT_TYPE_DOUBLE, { .dbl = 200.0 }, -INFINITY, INFINITY },
   { "tplimit",      "use true peak processing above this sample peak",                 offsetof(LufscalcConfig, tplimit),        AV_OPT_TYPE_DOUBLE, { .dbl = 0.0   }, -INFINITY, INFINITY },
   { "speedlimit",   "set processing speed limit",                                      offsetof(LufscalcConfig, speedlimit),     AV_OPT_TYPE_INT,    { 0 },   0, INT_MAX },
+  { "fix",          "fix loudness of xdcam hd or imx 50",                              offsetof(LufscalcConfig, fix),            AV_OPT_TYPE_INT,    { 0 },   0, 1 },
+  { "fixtarget",    "target loudness for fixing",                                      offsetof(LufscalcConfig, fix_target),     AV_OPT_TYPE_DOUBLE, { .dbl = -23.0 }, -INFINITY, INFINITY },
+  { "maxclip",      "maximum allowed clipping in dB when fixing",                      offsetof(LufscalcConfig, max_clip),       AV_OPT_TYPE_DOUBLE, { .dbl = 0.0   }, -INFINITY, INFINITY },
   { NULL },
 };
 
@@ -226,7 +235,7 @@ static void calc_peak(double* dblbuf[CH_MAX], int nb_samples, const int tgt_samp
     }
 }
 
-static void output_samples(AVFrame *frame, OutputContext *out, int downmix) {
+static void output_samples(AVFrame *frame, OutputContext *out, int downmix, int store_offsets) {
     const int tgt_sample_rate = SAMPLE_RATE;
     const enum AVSampleFormat tgt_sample_fmt = AV_SAMPLE_FMT_DBLP;
     int64_t tgt_channel_layout;
@@ -275,6 +284,21 @@ static void output_samples(AVFrame *frame, OutputContext *out, int downmix) {
         out->src_channels = frame->channels;
     }
     
+    if (store_offsets) {
+        if (!(out->nb_offsets & (out->nb_offsets + 1))) {
+            out->offsets = av_realloc_array(out->offsets, (out->nb_offsets + 1) * 2, sizeof(out->offsets[0]));
+            if (!out->offsets)
+                panic("not enough memory allocating offset chunk");
+        }
+        out->offsets[out->nb_offsets] = frame->pkt_pos;
+        out->nb_offsets++;
+        if (frame->nb_samples != 1920)
+            panic("cannot fix: invalid number of samples %d at offset %"PRId64, frame->nb_samples, frame->pkt_pos);
+        if (frame->format == AV_SAMPLE_FMT_S16 && (frame->pkt_size != 1920 * 8 * 2 || frame->channels != 8))
+            panic("cannot fix: invalid packet size %d at offset %"PRId64, frame->pkt_size, frame->pkt_pos);
+        if (frame->format == AV_SAMPLE_FMT_S32 && (frame->pkt_size != 1920 * 3 || frame->channels != 1))
+            panic("cannot fix: invalid packet size %d at offset %"PRId64, frame->pkt_size, frame->pkt_pos);
+    }
     for (i=0; i<tgt_channels; i++)
         buffers2[i] = out->buffers[i] + out->buffer_pos;
     nb_samples = swr_convert(out->swr_ctx, (uint8_t**)buffers2, BUFSIZE / av_get_bytes_per_sample(tgt_sample_fmt) - out->buffer_pos,
@@ -361,6 +385,117 @@ static void print_results(const char *filename, LufscalcConfig *conf, CalcContex
     }
     if (conf->json)
         printf("%s", "]\n");
+}
+
+static void fix_frame(FILE *f, int64_t offset, double gain, int chindex, int chcount, int format) {
+    int size;
+    uint8_t buf[65536];
+    uint8_t *xbuf;
+    static const uint8_t sdident[] = {0x06, 0x0e, 0x2b, 0x34, 0x01, 0x02, 0x01, 0x01, 0x0d, 0x01, 0x03, 0x01, 0x06, 0x01, 0x10, 0x00, 0x83, 0x00, 0xf0, 0x04};
+    static const uint8_t hdident[] = {0x06, 0x0e, 0x2b, 0x34, 0x01, 0x02, 0x01, 0x01, 0x0d, 0x01, 0x03, 0x01, 0x16, 0x08, 0x03, 0x00, 0x83, 0x00, 0x16, 0x80};
+    const uint8_t* header;
+    int i;
+
+    if (fabs(gain) < 0.1)
+        return;
+
+    gain = pow(10, gain / 20.0);
+    if (format == AV_CODEC_ID_PCM_S16LE) {
+        size = 20 + 4 * 1920 * chcount;
+        header = sdident;
+    } else {
+        size = 20 + 3 * 1920 * chcount;
+        header = hdident;
+    }
+    if (size > sizeof(buf))
+        panic("cannot fix: too big packet");
+    if (fseek(f, offset, SEEK_SET) == -1)
+        panic("cannot fix: cannot seek");
+    if (fread(buf, 1, size, f) != size)
+        panic("cannot fix: read too little");
+    for (i = 0; i < 20; i++)
+        if (i != 15 && buf[i] != header[i])
+             panic("cannot fix: mxf ident mismatch at index %d at offset %"PRId64, i, offset);
+    xbuf = buf + 20;
+    if (format == AV_CODEC_ID_PCM_S16LE) {
+        if ((xbuf[0] != 0 && xbuf[0] != 0x80) || xbuf[1] != 0x80 || xbuf[2] != 0x07 || xbuf[3] != 0xff)
+            panic("cannot fix: AES header mismatch");
+        xbuf += 4;
+        {
+            uint32_t *p = ((uint32_t*)xbuf) + chindex;
+            uint32_t *pend = p + 1920 * chcount;
+            for (; p < pend; p += chcount) {
+                double val = (int16_t)((*p >> 12) & 0xffff);
+//                av_log(NULL, AV_LOG_ERROR, "Old: %08x\n", *p);
+                *p = (*p & 0xf0000fff) | (((uint32_t)((uint16_t)av_clip_int16(lrint(val * gain)))) << 12);
+//                av_log(NULL, AV_LOG_ERROR, "New: %08x\n", *p);
+            }
+        }
+    } else {
+        uint32_t *p = (uint32_t*)(xbuf - 1);
+        for (i = 0; i < 1920; i++, p = (uint32_t *)((uint8_t*)p + 3)) {
+            double val = (int32_t)((*p & 0xffffff00));
+//            av_log(NULL, AV_LOG_ERROR, "Old: %08x\n", *p);
+            *p = (*p & 0x000000ff) | (((uint32_t)av_clipl_int32(llrint(val * gain))) & 0xffffff00);
+//            av_log(NULL, AV_LOG_ERROR, "New: %08x\n", *p);
+        }
+    }
+    if (fseek(f, offset, SEEK_SET) == -1)
+        panic("cannot fix: cannot seek");
+    if (fwrite(buf, 1, size, f) != size)
+        panic("cannot fix: wrote too little");
+}
+
+static void fix_file(const char *filename, LufscalcConfig *conf, CalcContext *rootcalc, int nb_offsets, int64_t **offsets, int *chindex, int *chcount, int format) {
+    CalcContext *calc;
+    int i, j;
+    int64_t **offsets0 = offsets;
+    int *chindex0 = chindex;
+    int *chcount0 = chcount;
+    int needs_fixing = 0;
+    FILE *f;
+
+    for (calc = rootcalc; calc; calc = calc->next) {
+        double peak = 20 * log10(calc->peak.peak);
+        calc->gain = (conf->fix_target - calc->lufs);
+        if (fabs(calc->gain) >= 0.1) {
+            if (calc->gain + peak > conf->max_clip)
+                panic("cannot fix: will clip, peak is %7.4f, gain is %7.4f, max clip is: %7.4f", peak, calc->gain, conf->max_clip);
+            if (calc->gain + peak > 0)
+                av_log(conf, AV_LOG_WARNING, "Fixing the file involves clipping of %7.4f dB.\n", calc->gain + peak);
+            if (fabs(calc->gain) > 20.0)
+                panic("cannot fix: too big gain: %7.3f", calc->gain);
+            needs_fixing = 1;
+        }
+    }
+
+    if (!needs_fixing) {
+        av_log(conf, AV_LOG_INFO, "Not fixing file %s because gain is negligable.\n", filename);
+        return;
+    }
+
+    av_log(conf, AV_LOG_INFO, "Fixing file %s.\n", filename);
+
+    f = fopen(filename, "r+");
+    if (!f)
+        panic("cannot fix: cannot open file");
+
+    for (i=0; i<nb_offsets; i++) {
+        offsets = offsets0;
+        chindex = chindex0;
+        chcount = chcount0;
+        for (calc = rootcalc; calc; calc = calc->next) {
+            for (j = 0; j < calc->nb_channels; j++) {
+                fix_frame(f, **offsets, calc->gain, *chindex, *chcount, format);
+                offsets[0]++;
+                offsets++;
+                chindex++;
+                chcount++;
+            }
+        }
+    }
+
+    fclose(f);
 }
 
 /*
@@ -538,7 +673,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
                         break;
                     }
                     if (got_frame)
-                        output_samples(decoded_frame, &out[i], conf->downmix);
+                        output_samples(decoded_frame, &out[i], conf->downmix, conf->fix);
                     avpkt.size -= len;
                     avpkt.data += len;
                     avpkt.dts =
@@ -579,6 +714,51 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
             calc->lra = conf->lra ? bs1770_ctx_track_lra_default(calc->bs1770_ctx,0) : -1;
         }
 
+        if (conf->fix) {
+            int sd = (ic->nb_streams == 2);
+            int hd = (ic->nb_streams == 9);
+            int k = 0;
+            AVStream *video;
+            int64_t *offsets[CH_MAX];
+            int chindex[CH_MAX];
+            int chcount[CH_MAX];
+
+            if (!ic->iformat || strcmp(ic->iformat->name, "mxf"))
+                panic("cannot fix: not mxf");
+            if (!(sd ^ hd))
+                panic("cannot fix: invalid number of streams");
+            video = ic->streams[0];
+            if (video->codec->codec_id != AV_CODEC_ID_MPEG2VIDEO)
+                panic("cannot fix: first stream is not mpeg2");
+            if (!((sd && video->codec->width ==  720 && video->codec->height ==  608) ||
+                  (hd && video->codec->width == 1920 && video->codec->height == 1080)))
+                panic("cannot fix: invalid video width for stream");
+            if (video->codec->pix_fmt != AV_PIX_FMT_YUV422P)
+                panic("cannot fix: invalid video pix fmt");
+            if (av_cmp_q(video->r_frame_rate, (AVRational){25, 1}))
+                panic("cannot fix: invalid frame rate");
+            for (i=0; i<nb_audio_streams; i++) {
+                if (c[i]->sample_rate != 48000)
+                    panic("cannot fix: invalid sample_rate %d", c[i]->sample_rate);
+                if (!((sd && c[i]->codec_id == AV_CODEC_ID_PCM_S16LE && c[i]->channels == 8) ||
+                      (hd && c[i]->codec_id == AV_CODEC_ID_PCM_S24LE && c[i]->channels == 1)))
+                    panic("cannot fix: invalid codec and channel combination (%s, %d)", c[i]->codec->name, c[i]->channels);
+            }
+            for (i=0; i<nb_audio_streams; i++) {
+                if (i > 1 && out[i].nb_offsets != out[i-1].nb_offsets)
+                    panic("cannot fix: inconsistent number of offsets");
+            }
+            for (i=0; i<nb_audio_streams; i++) {
+                for (j=0;j<out[i].last_channels;j++) {
+                    chindex[k] = j;
+                    chcount[k] = out[i].last_channels;
+                    offsets[k++] = out[i].offsets;
+                }
+            }
+
+            fix_file(filename, conf, rootcalc, out[0].nb_offsets, offsets, chindex, chcount, c[0]->codec_id);
+        }
+
         print_results(filename, conf, rootcalc);
     } else {
         char errbuf[256] = "Unknown error";
@@ -602,6 +782,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     }
     for (i = 0; i < nb_audio_streams; i++) {
         swr_free(&out[i].swr_ctx);
+        av_free(out[i].offsets);
         for (j=0; j<CH_MAX; j++)
             av_free(out[i].buffers[j]);
     }
