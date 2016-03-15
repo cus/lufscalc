@@ -137,8 +137,12 @@ static const AVClass lufscalc_config_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-static void panic(const char *str) {
-    av_log(NULL, AV_LOG_PANIC, "%s\n", str);
+static void panic(const char *msg, ...)
+{
+    va_list argument_list;
+    va_start(argument_list, msg);
+    av_vlog(NULL, AV_LOG_PANIC, msg, argument_list);
+    av_log(NULL, AV_LOG_PANIC, "\n");
     exit(1);
 }
 
