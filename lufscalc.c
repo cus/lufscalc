@@ -436,18 +436,18 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     }
 
     for (i = 0; i < ic->nb_streams; i++) {
-        if (ic->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO && sum_channels < channel_limit && nb_audio_streams < conf->track_limit) {
+        if (ic->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && sum_channels < channel_limit && nb_audio_streams < conf->track_limit) {
             if (nb_audio_streams >= MAX_STREAMS)
                 panic("cannot handle that many audio streams");
-            if (ic->streams[i]->codec->channels <= 0)
+            if (ic->streams[i]->codecpar->channels <= 0)
                 panic("channel count is 0");
-            if (sum_channels + ic->streams[i]->codec->channels >= CH_MAX)
+            if (sum_channels + ic->streams[i]->codecpar->channels >= CH_MAX)
                 panic("cannot handle that many audio channels");
             if ((audio_streams[nb_audio_streams] = av_find_best_stream(ic, AVMEDIA_TYPE_AUDIO, i, -1, codec + nb_audio_streams, 0)) < 0)
                 panic("cannot find valid audio stream");
             ic->streams[i]->discard = AVDISCARD_DEFAULT;
             nb_audio_streams++;
-            sum_channels += (conf->downmix ? conf->downmix : ic->streams[i]->codec->channels);
+            sum_channels += (conf->downmix ? conf->downmix : ic->streams[i]->codecpar->channels);
         } else {
             ic->streams[i]->discard = AVDISCARD_ALL;
         }
@@ -458,7 +458,13 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
     for (i = 0; i < nb_audio_streams; i++) {
         int stream_index = audio_streams[i];
-        c[i] = ic->streams[stream_index]->codec;
+        c[i] = avcodec_alloc_context3(NULL);
+        if (!c[i])
+            panic("failed to allocate codec context");
+        if (avcodec_parameters_to_context(c[i], ic->streams[stream_index]->codecpar) < 0)
+            panic("failed to create codec context");
+        av_codec_set_pkt_timebase(c[i], ic->streams[stream_index]->time_base);
+
         avcodec_string(codecname, sizeof(codecname), c[i], 0);
         av_log(conf, AV_LOG_INFO, "Stream %d: %s\n", stream_index, codecname);
         av_opt_set_int(c[i], "refcounted_frames", 1, 0);
@@ -593,7 +599,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         fclose(logfile);
 
     for (i=0; i<nb_audio_streams; i++)
-        avcodec_close(c[i]);
+        avcodec_free_context(&c[i]);
     avformat_close_input(&ic);
     av_free(decoded_frame);
 
