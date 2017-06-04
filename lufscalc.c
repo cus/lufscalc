@@ -89,6 +89,7 @@ typedef struct CalcContext {
     double lufs;
     double lra;
     struct CalcContext *next;
+    int64_t nb_samples;
 } CalcContext;
 
 typedef struct LufscalcConfig {
@@ -157,6 +158,7 @@ static void calc_lufs(double* dblbuf[CH_MAX], int nb_samples, const int tgt_samp
             dblbuf2[4] = dblbuf2[5];
         }
         bs1770_ctx_add_samples_p_f64(calc->bs1770_ctx, 0, tgt_sample_rate, calc->nb_channels, dblbuf2, nb_samples);
+        calc->nb_samples += nb_samples;
         k += calc->nb_channels;
     }
 }
@@ -327,12 +329,12 @@ static int calc_available_audio_samples(CalcContext *calc, OutputContext out[], 
     return min_nb_samples;
 }
 
-static void print_calc_results(int nb_channel, int track, const char *filename, double lufs, double lra, double peak, int silent, int json, int last) {
+static void print_calc_results(int nb_channel, int track, const char *filename, double lufs, double lra, double peak, int64_t nb_samples, int silent, int json, int last) {
     if (json) {
         if (lra >= 0) {
-            fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\", \"lra\":\"%.1f\"}%s\n", lufs, peak, lra, (last?"":","));
+            fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\", \"lra\":\"%.1f\", \"duration\":\"%"PRId64"\"}%s\n", lufs, peak, lra, nb_samples, (last?"":","));
         } else {
-            fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\"}%s\n", lufs, peak, (last?"":","));
+            fprintf(stdout, "{\"loudness\": \"%.1f\", \"peak\":\"%.1f\", \"duration\":\"%"PRId64"\"}%s\n", lufs, peak, nb_samples, (last?"":","));
         }
     } else {
         if (lra >= 0) {
@@ -357,6 +359,7 @@ static void print_results(const char *filename, LufscalcConfig *conf, CalcContex
         print_calc_results(calc->nb_channels, i, filename,
                            calc->lufs, calc->lra,
                            20*log10(FFMAX(0.00001, calc->peak.peak)),
+                           calc->nb_samples,
                            conf->silent, conf->json, !calc->next);
     }
     if (conf->json)
