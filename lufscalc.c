@@ -376,8 +376,8 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     AVFormatContext *ic = NULL;
     OutputContext out[MAX_STREAMS];
     int err, i, j, ret = 0;
-    AVPacket avpkt, pkt;
-    AVFrame *decoded_frame = NULL;
+    AVPacket *pkt;
+    AVFrame *decoded_frame;
     int eof = 0;
     char codecname[256];
     int nb_audio_streams = 0;
@@ -405,10 +405,11 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     if (peak_log_limit < 100)
         av_log(conf, AV_LOG_INFO, "Logging peaks above %.1f dBFS peak.\n",  20 * log10(peak_log_limit));
 
-    av_init_packet(&pkt);
     memset(&out, 0, MAX_STREAMS * sizeof(OutputContext));
     if (!(decoded_frame = av_frame_alloc()))
         panic("out of memory allocating the frame");
+    if (!(pkt = av_packet_alloc()))
+        panic("out of memory allocating the packet");
 
     if (fabs(conf->tplimit) != 0)
         av_log(conf, AV_LOG_INFO, "Calculating true peak above %.1f dBFS (%.2f) sample peak.\n", -fabs(conf->tplimit), pow(10, -fabs(conf->tplimit) / 20.0));
@@ -416,8 +417,6 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         av_log(conf, AV_LOG_INFO, "Calculating sample peak.\n");
     av_log(conf, AV_LOG_INFO, "Starting audio decoding of %s ...\n", filename);
     
-    ic = avformat_alloc_context();
-
     err = avformat_open_input(&ic, filename, NULL, NULL);
     if (err < 0)
         panic("failed to open file");
@@ -463,11 +462,9 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
             panic("failed to allocate codec context");
         if (avcodec_parameters_to_context(c[i], ic->streams[stream_index]->codecpar) < 0)
             panic("failed to create codec context");
-        av_codec_set_pkt_timebase(c[i], ic->streams[stream_index]->time_base);
 
         avcodec_string(codecname, sizeof(codecname), c[i], 0);
         av_log(conf, AV_LOG_INFO, "Stream %d: %s\n", stream_index, codecname);
-        av_opt_set_int(c[i], "refcounted_frames", 1, 0);
         if (avcodec_open2(c[i], codec[i], NULL) < 0)
             panic("could not open codec");
     }
@@ -522,7 +519,7 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
 
     starttime = av_gettime();
     while (ret == 0) {
-        ret = av_read_frame(ic, &pkt);
+        ret = av_read_frame(ic, pkt);
         
         if (ret < 0) {
             if (ret == AVERROR_EOF || avio_feof(ic->pb))
@@ -533,30 +530,44 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
         }
 
         for (i=0; i<nb_audio_streams; i++) {
-            if (audio_streams[i] == pkt.stream_index) {
-                avpkt = pkt;
-                while (avpkt.size > 0) {
-                    int got_frame = 0;
-                    int len;
-        
-                    len = avcodec_decode_audio4(c[i], decoded_frame, &got_frame, &avpkt);
-                    if (len < 0) {
-                        av_log(conf, AV_LOG_ERROR, "Error while decoding.\n");
-                        if (!conf->resilient)
-                            ret = len;
+            if (audio_streams[i] == pkt->stream_index) {
+
+                ret = avcodec_send_packet(c[i], eof ? NULL : pkt);
+                if (ret < 0) {
+                    av_log(conf, AV_LOG_ERROR, "Error while decoding.\n");
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                        av_log(conf, AV_LOG_ERROR, "Internal API error.\n");
                         break;
                     }
-                    if (got_frame)
-                        output_samples(decoded_frame, &out[i], conf->downmix);
-                    avpkt.size -= len;
-                    avpkt.data += len;
-                    avpkt.dts =
-                    avpkt.pts = AV_NOPTS_VALUE;
+                    if (conf->resilient)
+                        ret = 0;
+                    else
+                        break;
                 }
+
+                while (ret >= 0) {
+                    ret = avcodec_receive_frame(c[i], decoded_frame);
+                    if (ret < 0) {
+                        if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)) {
+                            ret = 0;
+                            break;
+                        }
+
+                        av_log(conf, AV_LOG_ERROR, "Error while decoding.\n");
+                        if (conf->resilient) {
+                            ret = 0;
+                            continue;
+                        }
+                        break;
+                    }
+
+                    output_samples(decoded_frame, &out[i], conf->downmix);
+                }
+
             }
         }
 
-        av_free_packet(&pkt);
+        av_packet_unref(pkt);
 
         nb_decoded_samples += calc_available_audio_samples(rootcalc, out, nb_audio_streams, nb_decoded_samples, peak_log_limit, logfile, conf->crlf);
 
@@ -601,7 +612,8 @@ static int lufscalc_file(const char *filename, LufscalcConfig *conf)
     for (i=0; i<nb_audio_streams; i++)
         avcodec_free_context(&c[i]);
     avformat_close_input(&ic);
-    av_free(decoded_frame);
+    av_frame_free(&decoded_frame);
+    av_packet_free(&pkt);
 
     for (calc = rootcalc; calc; calc = calc->next) {
         bs1770_ctx_close(calc->bs1770_ctx);
@@ -624,9 +636,6 @@ int main(int argc, char **argv)
     LufscalcConfig conf;
     int filecount = 0;
 
-    /* register all the codecs */
-    avcodec_register_all();
-    av_register_all();
     avformat_network_init();
 
     memset(&conf, 0, sizeof(conf));
