@@ -1,24 +1,62 @@
-diff --git a/Makefile b/Makefile
-index e484249..79e6140 100644
---- a/Makefile
-+++ b/Makefile
-@@ -20,6 +20,7 @@ AVPROGS-$(CONFIG_FFSERVER) += ffserver
+diff --git a/doc/Makefile b/doc/Makefile
+index 25774c7bad..d3cd395286 100644
+--- a/doc/Makefile
++++ b/doc/Makefile
+@@ -14,10 +14,11 @@ COMPONENTS-$(CONFIG_AVFORMAT)   += ffmpeg-formats ffmpeg-protocols
+ COMPONENTS-$(CONFIG_AVDEVICE)   += ffmpeg-devices
+ COMPONENTS-$(CONFIG_AVFILTER)   += ffmpeg-filters
  
- AVPROGS    := $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
- INSTPROGS   = $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
-+AVPROGS    += lufscalc$(PROGSSUF)$(EXESUF)
- PROGS      += $(AVPROGS)
++AVPROGSX-yes= $(filter-out lufscalc,$(AVPROGS-yes))
+ MANPAGES1   = $(AVPROGS-yes:%=doc/%.1)    $(AVPROGS-yes:%=doc/%-all.1)    $(COMPONENTS-yes:%=doc/%.1)
+ MANPAGES3   = $(LIBRARIES-yes:%=doc/%.3)
+ MANPAGES    = $(MANPAGES1) $(MANPAGES3)
+-PODPAGES    = $(AVPROGS-yes:%=doc/%.pod)  $(AVPROGS-yes:%=doc/%-all.pod)  $(COMPONENTS-yes:%=doc/%.pod)  $(LIBRARIES-yes:%=doc/%.pod)
++PODPAGES    = $(AVPROGSX-yes:%=doc/%.pod)  $(AVPROGSX-yes:%=doc/%-all.pod)  $(COMPONENTS-yes:%=doc/%.pod)  $(LIBRARIES-yes:%=doc/%.pod)
+ HTMLPAGES   = $(AVPROGS-yes:%=doc/%.html) $(AVPROGS-yes:%=doc/%-all.html) $(COMPONENTS-yes:%=doc/%.html) $(LIBRARIES-yes:%=doc/%.html) \
+               doc/developer.html                                        \
+               doc/faq.html                                              \
+diff --git a/fftools/Makefile b/fftools/Makefile
+index 81ad6c4f4f..7e172aaf24 100644
+--- a/fftools/Makefile
++++ b/fftools/Makefile
+@@ -1,11 +1,12 @@
+ AVPROGS-$(CONFIG_FFMPEG)   += ffmpeg
+ AVPROGS-$(CONFIG_FFPLAY)   += ffplay
+ AVPROGS-$(CONFIG_FFPROBE)  += ffprobe
++AVPROGS-yes                += lufscalc
  
- AVBASENAMES  = ffmpeg ffplay ffprobe ffserver
-@@ -124,6 +125,11 @@ $(PROGS): %$(PROGSSUF)$(EXESUF): %$(PROGSSUF)_g$(EXESUF)
- 	$(CP) $< $@
- 	$(STRIP) $@
+ AVPROGS     := $(AVPROGS-yes:%=%$(PROGSSUF)$(EXESUF))
+ PROGS       += $(AVPROGS)
  
-+lufscalc.o: bs1770/biquad.o bs1770/bs1770_a85.o bs1770/bs1770_add_samples.o bs1770/bs1770_aggr.o bs1770/bs1770.o bs1770/bs1770_ctx_add_samples.o bs1770/bs1770_ctx.o bs1770/bs1770_default.o bs1770/bs1770_hist.o bs1770/bs1770_nd_add_samples.o bs1770/bs1770_nd.o bs1770/bs1770_r128.o bs1770/bs1770_stats.o bs1770/bs1770_add_sample.o
-+lufscalc.o: CFLAGS += -DFFMPEG_STATIC_BUILD -DPLANAR -Df64
-+lufscalc_g$(EXESUF): LDFLAGS += bs1770/*.o
-+bs1770/bs1770_add_sample.o: CFLAGS += -UPLANAR
+-AVBASENAMES  = ffmpeg ffplay ffprobe
++AVBASENAMES  = ffmpeg ffplay ffprobe lufscalc
+ ALLAVPROGS   = $(AVBASENAMES:%=%$(PROGSSUF)$(EXESUF))
+ ALLAVPROGS_G = $(AVBASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
+ 
+@@ -15,6 +16,26 @@ OBJS-ffmpeg +=                  \
+     fftools/ffmpeg_mux.o        \
+     fftools/ffmpeg_opt.o        \
+ 
++OBJS-lufscalc += \
++    fftools/bs1770/biquad.o \
++    fftools/bs1770/bs1770_a85.o \
++    fftools/bs1770/bs1770_add_samples.o \
++    fftools/bs1770/bs1770_aggr.o \
++    fftools/bs1770/bs1770.o \
++    fftools/bs1770/bs1770_ctx_add_samples.o \
++    fftools/bs1770/bs1770_ctx.o \
++    fftools/bs1770/bs1770_default.o \
++    fftools/bs1770/bs1770_hist.o \
++    fftools/bs1770/bs1770_nd_add_samples.o \
++    fftools/bs1770/bs1770_nd.o \
++    fftools/bs1770/bs1770_r128.o \
++    fftools/bs1770/bs1770_stats.o \
++    fftools/bs1770/bs1770_add_sample.o
 +
- %$(PROGSSUF)_g$(EXESUF): %.o $(FF_DEP_LIBS)
- 	$(LD) $(LDFLAGS) $(LDEXEFLAGS) $(LD_O) $(OBJS-$*) $(FF_EXTRALIBS)
- 
++fftools/lufscalc.o: CFLAGS += -DFFMPEG_STATIC_BUILD
++fftools/bs1770/%.o: CFLAGS += -DPLANAR -Df64
++fftools/bs1770/bs1770_add_sample.o: CFLAGS += -UPLANAR
++
+ define DOFFTOOL
+ OBJS-$(1) += fftools/cmdutils.o fftools/opt_common.o fftools/$(1).o $(OBJS-$(1)-yes)
+ $(1)$(PROGSSUF)_g$(EXESUF): $$(OBJS-$(1))
